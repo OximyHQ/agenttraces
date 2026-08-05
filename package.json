@@ -1,0 +1,29 @@
+{
+  "name": "agenttraces",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.12.1",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -b packages/core apps/cli apps/mcp apps/api apps/daemon apps/worker",
+    "typecheck": "tsc -b packages/core apps/cli apps/mcp apps/api apps/daemon apps/worker --pretty false",
+    "test": "tsx --test tests/**/*.test.ts",
+    "test:coverage": "tsx --test --experimental-test-coverage tests/**/*.test.ts",
+    "verify": "pnpm typecheck && pnpm test && pnpm verify:machine",
+    "verify:machine": "tsx scripts/verify-machine.ts",
+    "readiness": "tsx scripts/readiness-report.ts",
+    "agenttraces": "tsx apps/cli/src/main.ts",
+    "mcp": "tsx apps/mcp/src/main.ts",
+    "api": "tsx apps/api/src/main.ts",
+    "daemon": "tsx apps/daemon/src/main.ts",
+    "worker": "tsx apps/worker/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}
