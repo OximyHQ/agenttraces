@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.agenttraces/
+*.log
+*.tsbuildinfo
+.DS_Store
+apps/web/.vinext/
+apps/web/.wrangler/
+apps/web/dist/
+.impeccable/hook.cache.json

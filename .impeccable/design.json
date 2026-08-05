@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-04T00:00:00.000Z",
+  "title": "Design System: AgentTraces",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "System Paper",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#ffffff", "#f7f7f4", "#efeee9"]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Trace Ink",
+        "canonical": "#171717",
+        "tonalRamp": ["#171717", "#454441", "#666560"]
+      },
+      "link": {
+        "role": "secondary",
+        "displayName": "Retrieval Blue",
+        "canonical": "#315f9d",
+        "tonalRamp": ["#315f9d", "#f1f5fa"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "System statement",
+        "purpose": "One factual promise in the first viewport."
+      },
+      "body": {
+        "displayName": "Manual text",
+        "purpose": "Plain-language explanation and operational UI."
+      },
+      "code": {
+        "displayName": "Evidence mono",
+        "purpose": "Commands, identifiers, paths, routes, and measured values only."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "native-scroll",
+        "value": "smooth with reduced-motion fallback",
+        "purpose": "Wayfinding between chapters; no decorative entrance motion."
+      }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "760px" },
+      { "name": "medium", "value": "920px" }
+    ],
+    "narrative": {
+      "northStar": "The Running Systems Manual",
+      "rules": [
+        "Color marks action or real state, never decoration.",
+        "Use code, evidence, rules, and diagrams as the visual material.",
+        "Operational hierarchy comes from alignment before container chrome."
+      ],
+      "dos": [
+        "Show product mechanics with realistic, labeled synthetic evidence.",
+        "Preserve generous reading intervals around dense operational passages."
+      ],
+      "donts": [
+        "Do not construct pages from repeated icon cards.",
+        "Do not use gradients, glass, glow, or decorative metric charts."
+      ]
+    }
+  }
+}

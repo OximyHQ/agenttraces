@@ -1,0 +1,22 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "apps/cli" },
+    { "path": "apps/mcp" },
+    { "path": "apps/api" },
+    { "path": "apps/daemon" },
+    { "path": "apps/worker" }
+  ],
+  "compilerOptions": {
+    "strict": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

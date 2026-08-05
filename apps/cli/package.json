@@ -1,0 +1,8 @@
+{
+  "name": "@agenttraces/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "agenttraces": "./dist/main.js" },
+  "dependencies": { "@agenttraces/core": "workspace:*" }
+}
