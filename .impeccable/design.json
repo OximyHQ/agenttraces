@@ -1,40 +1,46 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-04T00:00:00.000Z",
+  "generatedAt": "2026-08-05T00:00:00.000Z",
   "title": "Design System: AgentTraces",
   "extensions": {
     "colorMeta": {
       "paper": {
         "role": "neutral",
-        "displayName": "System Paper",
+        "displayName": "Paper",
         "canonical": "#ffffff",
-        "tonalRamp": ["#ffffff", "#f7f7f4", "#efeee9"]
+        "tonalRamp": ["#ffffff", "#f7f7f5", "#eeeeec"]
       },
       "ink": {
         "role": "primary",
-        "displayName": "Trace Ink",
+        "displayName": "Ink",
         "canonical": "#171717",
-        "tonalRamp": ["#171717", "#454441", "#666560"]
+        "tonalRamp": ["#171717", "#6f6f6f"]
       },
       "link": {
         "role": "secondary",
-        "displayName": "Retrieval Blue",
-        "canonical": "#315f9d",
-        "tonalRamp": ["#315f9d", "#f1f5fa"]
+        "displayName": "Link blue",
+        "canonical": "#446b9e",
+        "tonalRamp": ["#446b9e"]
+      },
+      "live": {
+        "role": "success",
+        "displayName": "Supported green",
+        "canonical": "#397252",
+        "tonalRamp": ["#397252"]
       }
     },
     "typographyMeta": {
-      "display": {
-        "displayName": "System statement",
-        "purpose": "One factual promise in the first viewport."
+      "headingOne": {
+        "displayName": "Page statement",
+        "purpose": "One quiet, factual promise at 18px."
       },
       "body": {
-        "displayName": "Manual text",
-        "purpose": "Plain-language explanation and operational UI."
+        "displayName": "Product text",
+        "purpose": "Explanations and interface copy at 14px."
       },
       "code": {
         "displayName": "Evidence mono",
-        "purpose": "Commands, identifiers, paths, routes, and measured values only."
+        "purpose": "Commands, identifiers, branches, times, and paths only."
       }
     },
     "shadows": [],
@@ -42,27 +48,27 @@
       {
         "name": "native-scroll",
         "value": "smooth with reduced-motion fallback",
-        "purpose": "Wayfinding between chapters; no decorative entrance motion."
+        "purpose": "In-page wayfinding only."
       }
     ],
     "breakpoints": [
-      { "name": "compact", "value": "760px" },
-      { "name": "medium", "value": "920px" }
+      { "name": "compact", "value": "620px" },
+      { "name": "narrow", "value": "390px" }
     ],
     "narrative": {
-      "northStar": "The Running Systems Manual",
+      "northStar": "The Quiet Trace Manual",
       "rules": [
-        "Color marks action or real state, never decoration.",
-        "Use code, evidence, rules, and diagrams as the visual material.",
-        "Operational hierarchy comes from alignment before container chrome."
+        "Keep the page in an 848px frame and prose within 576px.",
+        "Keep body copy at 14px and the primary heading at 18px.",
+        "Use real commands and compact evidence views as the visual material."
       ],
       "dos": [
-        "Show product mechanics with realistic, labeled synthetic evidence.",
-        "Preserve generous reading intervals around dense operational passages."
+        "Label every synthetic trace preview.",
+        "Use alignment, whitespace, and one-pixel rules for hierarchy."
       ],
       "donts": [
-        "Do not construct pages from repeated icon cards.",
-        "Do not use gradients, glass, glow, or decorative metric charts."
+        "Do not use display typography, feature-card grids, gradients, glass, or glow.",
+        "Do not invent customers, testimonials, pricing, or capabilities."
       ]
     }
   }
