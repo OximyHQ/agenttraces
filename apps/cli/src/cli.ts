@@ -64,7 +64,7 @@ export async function executeCli(argv: string[], context: CliContext = {}): Prom
     if (parsed.command === "version") { io.out("0.1.0"); return { code: 0, value: "0.1.0" }; }
     store = new AgentTracesStore(state.database, state.home);
     const value = await command(parsed, store, userHome, context.cwd ?? process.cwd());
-    io.out(display(value, asJson));
+    if (parsed.command !== "mcp") io.out(display(value, asJson));
     return { code: 0, value };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
