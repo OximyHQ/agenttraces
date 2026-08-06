@@ -1,120 +1,93 @@
 ---
 name: AgentTraces
-description: A quiet systems manual for the memory shared by coding agents.
+description: A small, text-first surface for permissioned coding-agent memory.
 colors:
   paper: "#ffffff"
   ink: "#171717"
-  muted-ink: "#666560"
-  rule: "#deddd8"
-  soft-rule: "#efeee9"
-  wash: "#f7f7f4"
-  link: "#315f9d"
-  live: "#287451"
-  warn: "#a35b22"
-  diagram-ink: "#3f3e3b"
-  chapter: "#cfcec8"
-  body-ink: "#454441"
-  nav-wash: "#fbfbf9"
-  selected-wash: "#ecece8"
+  muted: "#6f6f6f"
+  faint: "#6f6f6f"
+  rule: "#dedede"
+  soft-rule: "#eeeeec"
+  wash: "#f7f7f5"
+  link: "#446b9e"
+  live: "#397252"
 typography:
-  display:
-    fontFamily: "Arial, Helvetica, sans-serif"
-    fontSize: "clamp(2.75rem, 7vw, 5.2rem)"
-    fontWeight: 600
-    lineHeight: 0.98
-    letterSpacing: "-0.035em"
-  section:
-    fontFamily: "Arial, Helvetica, sans-serif"
-    fontSize: "clamp(1.6rem, 3.5vw, 2.35rem)"
-    fontWeight: 600
-    lineHeight: 1.12
-    letterSpacing: "-0.03em"
-  lede:
-    fontFamily: "Arial, Helvetica, sans-serif"
-    fontSize: "clamp(1rem, 2vw, 1.16rem)"
-    fontWeight: 400
-    lineHeight: 1.55
-  body:
-    fontFamily: "Arial, Helvetica, sans-serif"
-    fontSize: "15px"
-    fontWeight: 400
-    lineHeight: 1.55
-  code:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
-    fontSize: "0.82rem"
-    fontWeight: 400
-    lineHeight: 1.5
-rounded:
-  control: "4px"
-  panel: "2px"
-  pill: "999px"
-spacing:
-  tight: "8px"
-  base: "16px"
-  section: "96px"
-components:
-  button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper}"
-    rounded: "{rounded.control}"
-    padding: "10px 14px"
-  code-panel:
-    backgroundColor: "{colors.wash}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.panel}"
-    padding: "14px 16px"
+  family: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+  headingOne: "600 18px/28px"
+  headingTwo: "600 16px/24px"
+  headingThree: "500 14px/20px"
+  body: "400 14px/20px"
+  code: "400 13px/21px ui-monospace"
+layout:
+  frame: "848px"
+  readingMeasure: "576px"
+  desktopTop: "96px"
+  mobileTop: "48px"
+  mobileGutter: "24px"
 ---
 
 # Design System: AgentTraces
 
-## Overview
+## The Quiet Trace Manual
 
-**Creative North Star: "The Running Systems Manual"**
+AgentTraces should feel like a precise, useful page an excellent developer
+made for other developers. It is small, calm, and immediately legible. The
+page explains the product through working commands, short prose, compact
+evidence views, and thin rules. It does not behave like a campaign site or an
+enterprise dashboard showroom.
 
-AgentTraces should feel like the clearest internal tool an excellent infrastructure team ever wrote: direct, inspectable, and calm enough to trust with sensitive work. Pages read as living technical documents rather than campaigns or collections of cards. Product diagrams, terminal commands, timelines, and policy tables are the visual material.
-
-**Key Characteristics:** restrained monochrome surfaces, blue textual actions, precise rules, wide breathing room, authored system diagrams, and dense operational views that remain easy to scan.
-
-## Colors
-
-White paper and near-black ink do most of the work. Blue is reserved for navigation and retrieval actions; green and amber communicate real state only.
-
-**The Evidence Color Rule.** Color marks a link, selected state, health, or warning. It never exists merely to make an area feel more designed.
+This direction takes its visual proportions from the restrained surface of
+givemeanode.com—particularly its narrow centered frame, small Inter type,
+subtle code panels, and generous whitespace—while using only original
+AgentTraces language and product-specific interface examples.
 
 ## Typography
 
-**Display Font:** Arial/Helvetica system sans
-**Body Font:** Arial/Helvetica system sans
-**Code Font:** SFMono-Regular/Menlo system mono
-
-Display typography is compact and factual. Body copy is conversational but exact. Monospace appears only for commands, identifiers, paths, and measured values.
+Inter Variable is the only UI typeface. Body copy is 14px with a 20px line
+height. The primary heading is intentionally only 18px; section headings are
+16px; subsection headings remain at body size with additional weight. Do not
+introduce display typography. Monospace is 13px and limited to commands, IDs,
+branches, times, and paths.
 
 ## Layout
 
-Marketing and explanatory pages use a centered 920px reading frame with generous vertical intervals. Operational dashboard views expand to 1280px and use a persistent narrow navigation rail, a list pane, and a detail pane. Responsive layouts collapse in reading order rather than shrinking desktop columns.
+Public pages use an 848px centered frame with a 576px prose measure. Desktop
+pages begin 96px from the top. At 620px and below, the frame uses 24px side
+gutters and 48px top padding. Sections are separated by 64px of whitespace and
+a quiet centered dot marker when a visible chapter break helps.
 
-## Elevation & Depth
+Operational previews may use up to 720px within the frame. They stay flat and
+compact: one outer rule, a small caption, aligned metadata, and event rows.
+Real dashboard pages may expand later, but they must keep the same type scale
+and information density.
 
-The system is flat by default. Hierarchy comes from whitespace, rules, tonal washes, and sticky spatial relationships. A small offset shadow may appear only for floating copy confirmations or mobile navigation.
+## Color and depth
 
-## Shapes
-
-Panels are nearly square with 2–4px corners. Pills are limited to compact state and filter controls. Diagrams use one-pixel rules, square nodes, and small circular connection points.
+White and near-black do almost all the work. Muted gray carries secondary
+copy. Blue is for links and retrieval context; green is only for a real healthy
+or supported state. Panels use a near-white wash and a one-pixel neutral rule.
+No gradients, glow, decorative shadows, glass, or ornamental color.
+All text tokens, including 9–10px metadata, must retain at least 4.5:1 contrast
+against their rendered background.
 
 ## Components
 
-Buttons are compact, text-led, and explicit. Code panels combine tabs, command text, and one copy action. Dashboard rows use typography and alignment before container chrome. Selected states use an underline or tonal wash. Focus uses a clearly visible two-pixel blue outline.
+- Navigation is plain text with a muted default and underlined hover.
+- Setup controls are horizontal text tabs inside one bordered command panel.
+- Buttons are text actions unless a later flow genuinely needs a primary
+  action.
+- Blockquotes represent a developer request or an important product note.
+- Tables use row rules and alignment before container chrome.
+- Trace previews must be labeled when they use synthetic data.
+- Focus is a visible two-pixel blue outline. Tab lists must support arrow keys.
 
-## Do's and Don'ts
+## Product constraints
 
-### Do:
-
-- **Do** demonstrate product mechanics with real commands and labeled synthetic trace data.
-- **Do** use whitespace to separate chapters and rules to explain relationships.
-- **Do** keep every important surface usable with keyboard and touch.
-
-### Don't:
-
-- **Don't** build the page from repeated icon cards.
-- **Don't** use gradients, glass, glow, or decorative dashboard charts.
-- **Don't** invent customers, prices, benchmarks, production endpoints, or capabilities.
+- Use the plural product name `AgentTraces` and the lowercase CLI command
+  `agenttraces`.
+- Never fabricate customers, testimonials, prices, benchmarks, or production
+  capabilities.
+- Explain that the current subscribed coding agent performs reasoning and that
+  AgentTraces retrieves permissioned evidence.
+- Personal traces are private by default. Team defaults belong to the owner.
+- Prefer a real command or compact trace example over generic feature cards.

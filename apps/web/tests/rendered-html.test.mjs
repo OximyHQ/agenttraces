@@ -23,24 +23,24 @@ async function render() {
   );
 }
 
-test("server-renders the AgentTraces system atlas", async () => {
+test("server-renders the compact AgentTraces landing page", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>AgentTraces — System Atlas<\/title>/i);
-  assert.match(html, /Give every agent the work that came before\./);
-  assert.match(html, /One system, four critical paths/);
-  assert.match(html, /All system components/);
-  assert.match(html, /Every product surface/);
-  assert.match(html, /The dashboard is an evidence browser/);
-  assert.match(html, /How the repository holds together/);
+  assert.match(html, /<title>AgentTraces — Memory for coding agents<\/title>/i);
+  assert.match(html, /Give your agent the work that came before\./);
+  assert.match(html, /Find past work in one sentence/);
+  assert.match(html, /A trace is evidence, not another chat transcript/);
+  assert.match(html, /Capture once, retrieve wherever you work/);
+  assert.match(html, /Seven local collectors, one trace model/);
+  assert.match(html, /collector coverage, not a promise of full product support/);
   assert.match(html, /Illustrative interface · synthetic trace data/);
-  assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
+  assert.doesNotMatch(html, /Acme|System Atlas|codex-preview|react-loading-skeleton/i);
 });
 
-test("keeps the atlas product-specific, responsive, and documented", async () => {
+test("keeps the surface small, responsive, accessible, and documented", async () => {
   const [page, css, layout, packageJson, product, design] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -50,16 +50,19 @@ test("keeps the atlas product-specific, responsive, and documented", async () =>
     readFile(new URL("../../../DESIGN.md", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /const architectureLayers/);
-  assert.match(page, /const surfaceGroups/);
-  assert.match(page, /const repoEntries/);
-  assert.match(page, /prepare.*confirm|confirmation-gated/is);
-  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(page, /role="tablist"/);
+  assert.match(page, /aria-selected=/);
+  assert.match(page, /THESIS: AgentTraces is a quiet memory layer/);
+  assert.match(page, /Personal traces are private by default/);
+  assert.match(css, /--frame: 848px/);
+  assert.match(css, /font-size: 14px/);
+  assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /:focus-visible/);
-  assert.match(layout, /AgentTraces — System Atlas/);
+  assert.match(layout, /@fontsource-variable\/inter/);
+  assert.match(packageJson, /@fontsource-variable\/inter/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.match(product, /<!-- impeccable:product-schema 1 -->/);
   assert.match(product, /The product name is AgentTraces, plural/);
-  assert.match(design, /The Running Systems Manual/);
+  assert.match(design, /The Quiet Trace Manual/);
 });
