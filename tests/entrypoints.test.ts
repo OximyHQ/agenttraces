@@ -23,6 +23,15 @@ test("MCP stdio executable handles initialize and tools/list lines", () => {
   } finally { temp.cleanup(); }
 });
 
+test("the packaged CLI MCP command emits protocol messages only", () => {
+  const temp = temporary();
+  try {
+    const input = `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`;
+    const result = run("apps/cli/src/main.ts", ["mcp"], temp.path, input); assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout.trim().split("\n"); assert.equal(lines.length, 1); assert.equal(JSON.parse(lines[0]!).id, 1);
+  } finally { temp.cleanup(); }
+});
+
 test("worker executable drains an empty queue with stable JSON", () => {
   const temp = temporary();
   try { const result = run("apps/worker/src/main.ts", [], temp.path); assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout), { service: "agenttraces-worker", processed: 0, failed: 0, produced: 0, remaining: 0 }); }
