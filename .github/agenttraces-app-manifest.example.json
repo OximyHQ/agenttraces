@@ -1,0 +1,21 @@
+{
+  "name": "AgentTraces",
+  "url": "https://YOUR_AGENTTRACES_DOMAIN",
+  "hook_attributes": {
+    "url": "https://YOUR_API_DOMAIN/v1/github/webhooks",
+    "active": true
+  },
+  "redirect_url": "https://YOUR_AGENTTRACES_DOMAIN/dashboard/team",
+  "public": false,
+  "default_permissions": {
+    "contents": "read",
+    "metadata": "read",
+    "pull_requests": "read"
+  },
+  "default_events": [
+    "installation",
+    "installation_repositories",
+    "pull_request",
+    "push"
+  ]
+}

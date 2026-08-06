@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible AgentTraces problem without including private trace content.
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not paste secrets or private transcript content. Prefer redacted doctor output and synthetic reproduction steps."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the smallest safe sequence of commands or fixture data.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AgentTraces version
+      placeholder: 0.1.0
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options: [Claude Code, Codex, Cursor, OpenClaw, Conductor, Antigravity, GitHub Copilot, Cloud API, Web dashboard, Other]
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted doctor output
+      render: shell

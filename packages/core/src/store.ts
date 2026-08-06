@@ -1,16 +1,17 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type {
-  Actor, IngestReceipt, NativeEnvelope, NormalizedEvent, SearchRequest, ShareSpec, SourceName,
-  TraceSummary, Visibility,
+  Actor, IngestReceipt, LinkEvidence, MembershipRole, NativeEnvelope, NormalizedEvent, PullRequestRef,
+  SearchRequest, SetupLinkSpec, ShareSpec, SourceName, TraceEnrichment, TraceSummary, Visibility,
 } from "./contracts.js";
 import { assertNativeEnvelope } from "./contracts.js";
 import { LocalCrypto } from "./crypto.js";
 import { ParserRegistry } from "./parsers/index.js";
 import { stableId, text } from "./parsers/base.js";
 import { scrubRecord } from "./redaction.js";
+import { sharePath, shareToken } from "./sharing.js";
 
 type Row = Record<string, unknown>;
 
@@ -20,6 +21,7 @@ function parse<T>(value: unknown, fallback: T): T {
 }
 function iso() { return new Date().toISOString(); }
 function id(prefix: string) { return `${prefix}_${randomBytes(9).toString("base64url")}`; }
+function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }
 
 export class AgentTracesStore {
   readonly db: DatabaseSync;
@@ -67,7 +69,64 @@ export class AgentTracesStore {
       CREATE TABLE IF NOT EXISTS cursors (source TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(source, key));
       CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS mutation_previews (token TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS setup_links (
+        id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, namespace_id TEXT NOT NULL, created_by TEXT NOT NULL,
+        email TEXT, domain TEXT, max_uses INTEGER, uses_count INTEGER NOT NULL DEFAULT 0, expires_at TEXT,
+        revoked_at TEXT, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS team_repositories (
+        namespace_id TEXT NOT NULL, repository TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(namespace_id, repository)
+      );
+      CREATE TABLE IF NOT EXISTS repositories (
+        id TEXT PRIMARY KEY, canonical_name TEXT UNIQUE NOT NULL, provider TEXT NOT NULL DEFAULT 'github', created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS git_commits (
+        repository_id TEXT NOT NULL, sha TEXT NOT NULL, branch TEXT, author_email TEXT, committed_at TEXT,
+        PRIMARY KEY(repository_id, sha)
+      );
+      CREATE TABLE IF NOT EXISTS pull_requests (
+        id TEXT PRIMARY KEY, repository_id TEXT NOT NULL, number INTEGER NOT NULL, title TEXT, state TEXT, url TEXT,
+        head_sha TEXT, base_sha TEXT, author_login TEXT, updated_at TEXT NOT NULL,
+        UNIQUE(repository_id, number)
+      );
+      CREATE TABLE IF NOT EXISTS trace_commits (
+        trace_id TEXT NOT NULL, repository_id TEXT NOT NULL, commit_sha TEXT NOT NULL, evidence TEXT NOT NULL,
+        confidence REAL NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(trace_id, repository_id, commit_sha)
+      );
+      CREATE TABLE IF NOT EXISTS trace_pull_requests (
+        trace_id TEXT NOT NULL, pull_request_id TEXT NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL,
+        confirmed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, PRIMARY KEY(trace_id, pull_request_id)
+      );
+      CREATE TABLE IF NOT EXISTS trace_enrichments (
+        trace_id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL, stages TEXT NOT NULL, outcome TEXT NOT NULL,
+        provider TEXT NOT NULL, model TEXT, prompt_version TEXT NOT NULL, generated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS share_snapshots (
+        share_id TEXT PRIMARY KEY, view TEXT NOT NULL, payload TEXT NOT NULL, source_updated_at TEXT NOT NULL, created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS share_access (
+        id TEXT PRIMARY KEY, share_id TEXT NOT NULL, viewer_hash TEXT, viewed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS github_installations (
+        id TEXT PRIMARY KEY, namespace_id TEXT NOT NULL, github_installation_id TEXT UNIQUE NOT NULL,
+        account_login TEXT NOT NULL, permissions TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
     `);
+    this.ensureColumn("events", "operation_kind", "TEXT");
+    this.ensureColumn("events", "operation_status", "TEXT");
+    this.ensureColumn("events", "purpose", "TEXT");
+    this.ensureColumn("events", "parent_event_id", "TEXT");
+    this.ensureColumn("events", "child_trace_id", "TEXT");
+    this.ensureColumn("events", "duration_ms", "INTEGER");
+    this.ensureColumn("events", "input", "TEXT");
+    this.ensureColumn("events", "output", "TEXT");
+    this.ensureColumn("traces", "enrichment_status", "TEXT NOT NULL DEFAULT 'pending'");
+  }
+
+  private ensureColumn(table: string, column: string, declaration: string) {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
+    if (!columns.some((row) => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${declaration}`);
   }
 
   private ensureInstallation() {
@@ -109,8 +168,13 @@ export class AgentTracesStore {
 
   actor(): Actor {
     const installation = this.installation();
-    const teams = this.db.prepare("SELECT namespace_id FROM memberships WHERE principal_id=? AND namespace_id != ?").all(installation.principalId, installation.namespaceId) as Row[];
-    return { principalId: installation.principalId, teamIds: teams.map((row) => String(row.namespace_id)), role: "owner" };
+    const teams = this.db.prepare("SELECT namespace_id,role FROM memberships WHERE principal_id=? AND namespace_id != ?").all(installation.principalId, installation.namespaceId) as Row[];
+    return {
+      principalId: installation.principalId,
+      teamIds: teams.map((row) => String(row.namespace_id)),
+      teamRoles: Object.fromEntries(teams.map((row) => [String(row.namespace_id), String(row.role) as MembershipRole])),
+      role: "owner",
+    };
   }
 
   registerDevice(deviceId: string, publicKey: string, name = "remote-device") {
@@ -159,7 +223,7 @@ export class AgentTracesStore {
     if (existing) return { id: String(existing.id), slug, role: "owner", existing: true };
     const teamId = id("ns_team");
     const principalId = this.installation().principalId;
-    this.db.prepare("INSERT INTO namespaces VALUES (?, 'team', ?, ?, 'team', ?)").run(teamId, principalId, slug, iso());
+    this.db.prepare("INSERT INTO namespaces VALUES (?, 'team', ?, ?, 'private', ?)").run(teamId, principalId, slug, iso());
     this.db.prepare("INSERT INTO memberships VALUES (?, ?, 'owner')").run(principalId, teamId);
     this.setSetting(`team.policy.${teamId}.visibility`, "private");
     this.audit(principalId, "team.create", "namespace", teamId, { slug });
@@ -199,6 +263,90 @@ export class AgentTracesStore {
     const principalId = this.installation().principalId;
     return this.db.prepare(`SELECT n.id,n.name,m.role,n.visibility_default FROM namespaces n
       JOIN memberships m ON m.namespace_id=n.id WHERE m.principal_id=? AND n.kind='team' ORDER BY n.name`).all(principalId);
+  }
+
+  createSetupLink(teamId: string, options: Omit<SetupLinkSpec, "teamId"> = {}, actor = this.actor()) {
+    this.requireTeamAdmin(teamId, actor);
+    if (options.maxUses !== undefined && (!Number.isInteger(options.maxUses) || options.maxUses < 1 || options.maxUses > 10_000)) {
+      throw new Error("Setup link maxUses must be between 1 and 10000");
+    }
+    if (options.expiresAt && Date.parse(options.expiresAt) <= Date.now()) throw new Error("Setup link expiry must be in the future");
+    if (options.email && !/^\S+@\S+\.\S+$/.test(options.email)) throw new Error("Invalid setup link email");
+    if (options.domain && !/^[a-z0-9.-]+$/i.test(options.domain)) throw new Error("Invalid setup link domain");
+    const setupLinkId = id("setup");
+    const token = randomBytes(24).toString("base64url");
+    const expiresAt = options.expiresAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString();
+    this.db.prepare(`INSERT INTO setup_links(id,token_hash,namespace_id,created_by,email,domain,max_uses,expires_at,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(
+      setupLinkId, hash(token), teamId, actor.principalId, options.email?.toLowerCase() ?? null,
+      options.domain?.toLowerCase() ?? null, options.maxUses ?? 50, expiresAt, iso(),
+    );
+    this.audit(actor.principalId, "setup_link.create", "setup_link", setupLinkId, { teamId, ...options, expiresAt });
+    return { id: setupLinkId, token, url: `/join/${token}`, teamId, expiresAt, maxUses: options.maxUses ?? 50 };
+  }
+
+  listSetupLinks(teamId: string, actor = this.actor()) {
+    this.requireTeamAdmin(teamId, actor);
+    return (this.db.prepare(`SELECT id,namespace_id,email,domain,max_uses,uses_count,expires_at,revoked_at,created_at
+      FROM setup_links WHERE namespace_id=? ORDER BY created_at DESC`).all(teamId) as Row[]).map((row) => ({
+      id: String(row.id), teamId: String(row.namespace_id), email: row.email ? String(row.email) : undefined,
+      domain: row.domain ? String(row.domain) : undefined, maxUses: row.max_uses === null ? undefined : Number(row.max_uses),
+      uses: Number(row.uses_count), expiresAt: row.expires_at ? String(row.expires_at) : undefined,
+      revokedAt: row.revoked_at ? String(row.revoked_at) : undefined, createdAt: String(row.created_at),
+    }));
+  }
+
+  revokeSetupLink(setupLinkId: string, actor = this.actor()) {
+    const row = this.db.prepare("SELECT namespace_id FROM setup_links WHERE id=?").get(setupLinkId) as Row | undefined;
+    if (!row) throw new Error("Setup link not found");
+    this.requireTeamAdmin(String(row.namespace_id), actor);
+    const result = this.db.prepare("UPDATE setup_links SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(iso(), setupLinkId);
+    if (!result.changes) throw new Error("Setup link is already revoked");
+    this.audit(actor.principalId, "setup_link.revoke", "setup_link", setupLinkId, {});
+    return { id: setupLinkId, revoked: true };
+  }
+
+  redeemSetupLink(token: string, suppliedEmail?: string) {
+    const row = this.db.prepare("SELECT * FROM setup_links WHERE token_hash=?").get(hash(token)) as Row | undefined;
+    if (!row || row.revoked_at) throw new Error("Setup link not found or revoked");
+    if (row.expires_at && Date.parse(String(row.expires_at)) <= Date.now()) throw new Error("Setup link expired");
+    if (row.max_uses !== null && Number(row.uses_count) >= Number(row.max_uses)) throw new Error("Setup link usage limit reached");
+    const principalId = this.installation().principalId;
+    const principal = this.db.prepare("SELECT email FROM principals WHERE id=?").get(principalId) as Row | undefined;
+    const email = String(suppliedEmail ?? principal?.email ?? "").toLowerCase();
+    if (row.email && email !== String(row.email)) throw new Error("Setup link is bound to another email");
+    if (row.domain && email.split("@")[1] !== String(row.domain)) throw new Error("Setup link requires an approved email domain");
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("INSERT INTO memberships VALUES (?,?, 'member') ON CONFLICT(principal_id,namespace_id) DO NOTHING").run(principalId, row.namespace_id as SQLInputValue);
+      this.db.prepare("UPDATE setup_links SET uses_count=uses_count+1 WHERE id=?").run(row.id as SQLInputValue);
+      this.setSetting("active_team_id", String(row.namespace_id));
+      this.audit(principalId, "setup_link.redeem", "setup_link", String(row.id), { teamId: row.namespace_id });
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    return { teamId: String(row.namespace_id), principalId, role: "member" as const, deviceId: this.installation().deviceId };
+  }
+
+  addTeamRepository(teamId: string, repository: string, actor = this.actor()) {
+    this.requireTeamAdmin(teamId, actor);
+    const canonical = repository.replace(/^git@github\.com:/, "https://github.com/").replace(/\.git$/, "");
+    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(canonical)) throw new Error("Team repository must be a canonical GitHub repository URL");
+    this.db.prepare("INSERT INTO team_repositories VALUES (?,?,?,?) ON CONFLICT(namespace_id,repository) DO NOTHING")
+      .run(teamId, canonical, actor.principalId, iso());
+    this.audit(actor.principalId, "team_repository.add", "repository", canonical, { teamId });
+    return { teamId, repository: canonical };
+  }
+
+  listTeamRepositories(teamId: string, actor = this.actor()) {
+    if (!actor.teamIds.includes(teamId)) throw new Error("Team not found or inaccessible");
+    return this.db.prepare("SELECT repository,created_at FROM team_repositories WHERE namespace_id=? ORDER BY repository").all(teamId);
+  }
+
+  listTeamDevices(teamId: string, actor = this.actor()) {
+    this.requireTeamAdmin(teamId, actor);
+    return this.db.prepare(`SELECT d.id,d.name,d.claimed,d.created_at,p.email,p.name principal_name,m.role
+      FROM memberships m JOIN devices d ON d.principal_id=m.principal_id JOIN principals p ON p.id=d.principal_id
+      WHERE m.namespace_id=? ORDER BY d.created_at DESC`).all(teamId);
   }
 
   enqueue(batchId: string, envelopes: NativeEnvelope[], expectedDeviceId = this.installation().deviceId): IngestReceipt {
@@ -269,13 +417,15 @@ export class AgentTracesStore {
         namespaceId === install.namespaceId ? this.setting("privacy.default") ?? "private" : this.setting(`team.policy.${namespaceId}.visibility`) ?? "private", now, now,
       );
       for (const record of records) {
-        this.db.prepare(`INSERT OR IGNORE INTO events(id,trace_id,source_event_id,source,kind,role,content,tool_name,tool_call_id,command,model,timestamp,input_tokens,output_tokens,cost_usd,cost_accuracy,parser_version,source_file,file_type,metadata)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        this.db.prepare(`INSERT OR IGNORE INTO events(id,trace_id,source_event_id,source,kind,role,content,tool_name,tool_call_id,command,model,timestamp,input_tokens,output_tokens,cost_usd,cost_accuracy,parser_version,source_file,file_type,metadata,operation_kind,operation_status,purpose,parent_event_id,child_trace_id,duration_ms,input,output)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           record.id, traceId, record.sourceEventId, record.source, record.kind, record.role ?? null,
           record.content ?? null, record.toolName ?? null, record.toolCallId ?? null, record.command ?? null,
           record.model ?? null, record.timestamp, record.inputTokens ?? null, record.outputTokens ?? null,
           record.costUsd ?? null, record.costAccuracy ?? null, record.parserVersion, record.sourceFile,
-          record.fileType, json(record.metadata),
+          record.fileType, json(record.metadata), record.operationKind ?? null, record.operationStatus ?? null,
+          record.purpose ?? null, record.parentEventId ?? null, record.childTraceId ?? null, record.durationMs ?? null,
+          record.input ? json(record.input) : null, record.output ? json(record.output) : null,
         );
         if (record.repository || record.branch || record.pullRequest) {
           this.db.prepare("UPDATE traces SET repository=COALESCE(?,repository), branch=COALESCE(?,branch), pull_request=COALESCE(?,pull_request) WHERE id=?")
@@ -290,9 +440,12 @@ export class AgentTracesStore {
   private refreshTrace(traceId: string) {
     const rollup = this.db.prepare(`SELECT COUNT(*) AS event_count, COALESCE(SUM(input_tokens),0) AS input_tokens,
       COALESCE(SUM(output_tokens),0) AS output_tokens, SUM(cost_usd) AS cost_usd,
+      MAX(CASE WHEN cost_accuracy='exact' THEN 1 ELSE 0 END) AS has_exact,
+      MAX(CASE WHEN cost_accuracy='estimated' THEN 1 ELSE 0 END) AS has_estimated,
+      MAX(CASE WHEN cost_accuracy='subscription_included' THEN 1 ELSE 0 END) AS has_subscription,
       MAX(CASE WHEN content IS NOT NULL AND content != '' THEN content END) AS summary, MAX(timestamp) AS updated_at
       FROM events WHERE trace_id=?`).get(traceId) as Row;
-    const accuracy = rollup.cost_usd === null ? "unavailable" : "estimated";
+    const accuracy = Number(rollup.has_exact) ? "exact" : Number(rollup.has_estimated) ? "estimated" : Number(rollup.has_subscription) ? "subscription_included" : "unavailable";
     this.db.prepare("UPDATE traces SET event_count=?, input_tokens=?, output_tokens=?, cost_usd=?, cost_accuracy=?, summary=COALESCE(?,summary), updated_at=? WHERE id=?")
       .run(rollup.event_count as SQLInputValue, rollup.input_tokens as SQLInputValue, rollup.output_tokens as SQLInputValue,
         rollup.cost_usd as SQLInputValue, accuracy, text(rollup.summary)?.slice(0, 300) ?? null, rollup.updated_at as SQLInputValue, traceId);
@@ -316,23 +469,25 @@ export class AgentTracesStore {
   }
 
   getTrace(traceId: string, actor = this.actor(), view: "metadata" | "summary" | "full_transcript" | "commands" | "files" | "usage" = "summary") {
+    if (actor.shareToken) return this.getShareSnapshot(actor.shareToken, traceId, view);
     const row = this.db.prepare("SELECT * FROM traces WHERE id=?").get(traceId) as Row | undefined;
     if (!row || !this.canAccess(row, actor)) throw new Error("Trace not found or inaccessible");
-    if (actor.shareToken) {
-      const share = this.db.prepare("SELECT spec FROM shares WHERE token=? AND revoked_at IS NULL").get(actor.shareToken) as Row | undefined;
-      const spec = parse<ShareSpec>(share?.spec, {} as ShareSpec);
-      const allowed = spec.content === "full_transcript" || spec.content === "selected_messages"
-        ? ["metadata", "summary", "full_transcript", "commands", "files", "usage"]
-        : spec.content === "metadata" ? ["metadata"] : ["metadata", "summary", "usage"];
-      if (!allowed.includes(view)) throw new Error("This share does not grant that trace view");
-    }
     const trace = this.traceRow(row);
     if (view === "metadata" || view === "summary" || view === "usage") return trace;
     let clause = "";
     if (view === "commands") clause = " AND kind IN ('command','tool_call')";
     if (view === "files") clause = " AND kind='file'";
     const events = this.db.prepare(`SELECT * FROM events WHERE trace_id=?${clause} ORDER BY timestamp,id LIMIT 500`).all(traceId) as Row[];
-    return { ...trace, events: events.map((eventRow) => ({ ...eventRow, metadata: parse(eventRow.metadata, {}) })), truncated: trace.eventCount > events.length };
+    return {
+      ...trace,
+      events: events.map((eventRow) => ({
+        ...eventRow,
+        metadata: parse(eventRow.metadata, {}),
+        input: parse(eventRow.input, undefined),
+        output: parse(eventRow.output, undefined),
+      })),
+      truncated: trace.eventCount > events.length,
+    };
   }
 
   current(actor = this.actor()) { return this.listTraces(actor, { limit: 1 })[0] ?? null; }
@@ -356,13 +511,128 @@ export class AgentTracesStore {
     };
   }
 
+  prepareTraceEnrichment(traceId: string, actor = this.actor()) {
+    const trace = this.getTrace(traceId, actor, "full_transcript") as TraceSummary & { events: Row[] };
+    const meaningful = trace.events.filter((event) => ["user", "assistant", "tool_call", "tool_result", "error"].includes(String(event.kind))).slice(0, 80);
+    return {
+      traceId,
+      currentTitle: trace.title,
+      currentSummary: trace.summary,
+      repository: trace.repository,
+      source: trace.source,
+      promptVersion: "trace-summary-v1",
+      events: meaningful.map((event) => ({
+        id: String(event.id), kind: String(event.kind), role: event.role ? String(event.role) : undefined,
+        operationKind: event.operation_kind ? String(event.operation_kind) : undefined,
+        text: String(event.content ?? event.command ?? event.tool_name ?? "").slice(0, 2_000),
+      })),
+    };
+  }
+
+  cacheTraceEnrichment(input: Omit<TraceEnrichment, "generatedAt"> & { generatedAt?: string }, actor = this.actor()) {
+    const trace = this.db.prepare("SELECT owner_id,namespace_id FROM traces WHERE id=?").get(input.traceId) as Row | undefined;
+    if (!trace || !(trace.owner_id === actor.principalId || actor.teamIds.includes(String(trace.namespace_id)))) throw new Error("Trace not found or inaccessible");
+    if (!input.title.trim() || !input.summary.trim()) throw new Error("Trace enrichment requires a title and summary");
+    const generatedAt = input.generatedAt ?? iso();
+    this.db.prepare(`INSERT INTO trace_enrichments(trace_id,title,summary,stages,outcome,provider,model,prompt_version,generated_at)
+      VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(trace_id) DO UPDATE SET title=excluded.title,summary=excluded.summary,
+      stages=excluded.stages,outcome=excluded.outcome,provider=excluded.provider,model=excluded.model,
+      prompt_version=excluded.prompt_version,generated_at=excluded.generated_at`).run(
+      input.traceId, input.title.slice(0, 160), input.summary.slice(0, 2_000), json(input.stages.slice(0, 8)),
+      input.outcome, input.provider, input.model ?? null, input.promptVersion, generatedAt,
+    );
+    this.db.prepare("UPDATE traces SET title=?,summary=?,enrichment_status='ready' WHERE id=?")
+      .run(input.title.slice(0, 160), input.summary.slice(0, 2_000), input.traceId);
+    this.audit(actor.principalId, "trace.enrichment.cache", "trace", input.traceId, { provider: input.provider, model: input.model });
+    return this.getTraceEnrichment(input.traceId, actor);
+  }
+
+  getTraceEnrichment(traceId: string, actor = this.actor()): TraceEnrichment | null {
+    this.getTrace(traceId, actor, "metadata");
+    const row = this.db.prepare("SELECT * FROM trace_enrichments WHERE trace_id=?").get(traceId) as Row | undefined;
+    if (!row) return null;
+    return {
+      traceId, title: String(row.title), summary: String(row.summary), stages: parse(row.stages, []),
+      outcome: String(row.outcome) as TraceEnrichment["outcome"], provider: String(row.provider) as TraceEnrichment["provider"],
+      model: row.model ? String(row.model) : undefined, promptVersion: String(row.prompt_version), generatedAt: String(row.generated_at),
+    };
+  }
+
+  linkTraceToCommit(traceId: string, repository: string, sha: string, evidence: LinkEvidence = "exact_commit", confidence = 1, actor = this.actor()) {
+    this.getTrace(traceId, actor, "metadata");
+    if (!/^[0-9a-f]{7,64}$/i.test(sha)) throw new Error("Invalid commit SHA");
+    const repositoryId = this.ensureRepository(repository);
+    this.db.prepare("INSERT INTO git_commits(repository_id,sha) VALUES(?,?) ON CONFLICT(repository_id,sha) DO NOTHING").run(repositoryId, sha.toLowerCase());
+    this.db.prepare(`INSERT INTO trace_commits(trace_id,repository_id,commit_sha,evidence,confidence,created_at)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(trace_id,repository_id,commit_sha) DO UPDATE SET evidence=excluded.evidence,confidence=excluded.confidence`)
+      .run(traceId, repositoryId, sha.toLowerCase(), evidence, this.validConfidence(confidence), iso());
+    return { traceId, repository, sha: sha.toLowerCase(), evidence, confidence };
+  }
+
+  upsertPullRequest(input: { repository: string; number: number; title?: string; state?: string; url?: string; headSha?: string; baseSha?: string; authorLogin?: string }) {
+    if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Invalid pull request number");
+    const repositoryId = this.ensureRepository(input.repository);
+    const pullRequestId = `pr_${stableId(repositoryId, input.number)}`;
+    this.db.prepare(`INSERT INTO pull_requests(id,repository_id,number,title,state,url,head_sha,base_sha,author_login,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository_id,number) DO UPDATE SET title=excluded.title,state=excluded.state,
+      url=excluded.url,head_sha=excluded.head_sha,base_sha=excluded.base_sha,author_login=excluded.author_login,updated_at=excluded.updated_at`).run(
+      pullRequestId, repositoryId, input.number, input.title ?? null, input.state ?? null, input.url ?? null,
+      input.headSha ?? null, input.baseSha ?? null, input.authorLogin ?? null, iso(),
+    );
+    return { id: pullRequestId, ...input };
+  }
+
+  linkTraceToPullRequest(traceId: string, input: {
+    repository: string; number: number; title?: string; state?: string; url?: string; headSha?: string; baseSha?: string; authorLogin?: string;
+    evidence?: LinkEvidence; confidence?: number; confirmed?: boolean;
+  }, actor = this.actor()) {
+    this.getTrace(traceId, actor, "metadata");
+    const pullRequest = this.upsertPullRequest(input);
+    const evidence = input.evidence ?? "manual";
+    const confidence = this.validConfidence(input.confidence ?? (evidence === "manual" || evidence === "exact_commit" ? 1 : 0.75));
+    this.db.prepare(`INSERT INTO trace_pull_requests(trace_id,pull_request_id,evidence,confidence,confirmed,created_at)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(trace_id,pull_request_id) DO UPDATE SET evidence=excluded.evidence,
+      confidence=excluded.confidence,confirmed=excluded.confirmed`).run(traceId, pullRequest.id, evidence, confidence, input.confirmed ? 1 : 0, iso());
+    this.audit(actor.principalId, "trace.pull_request.link", "trace", traceId, { pullRequestId: pullRequest.id, evidence, confidence });
+    return { traceId, pullRequestId: pullRequest.id, repository: input.repository, number: input.number, evidence, confidence, confirmed: Boolean(input.confirmed) };
+  }
+
+  getPullRequestTrace(repository: string, number: number, actor = this.actor()) {
+    const canonical = repository.replace(/^git@github\.com:/, "https://github.com/").replace(/\.git$/, "");
+    const row = this.db.prepare(`SELECT pr.*,r.canonical_name repository FROM pull_requests pr
+      JOIN repositories r ON r.id=pr.repository_id WHERE r.canonical_name=? AND pr.number=?`).get(canonical, number) as Row | undefined;
+    const traces = row ? (this.db.prepare(`SELECT t.* FROM traces t JOIN trace_pull_requests l ON l.trace_id=t.id
+      WHERE l.pull_request_id=? ORDER BY t.updated_at DESC`).all(row.id as SQLInputValue) as Row[])
+      .filter((trace) => this.canAccess(trace, actor)).map((trace) => this.traceRow(trace)) : [];
+    return {
+      pullRequest: row ? { id: row.id, repository: row.repository, number: Number(row.number), title: row.title, state: row.state, url: row.url, headSha: row.head_sha, baseSha: row.base_sha } : null,
+      traces,
+      usage: {
+        inputTokens: traces.reduce((sum, trace) => sum + trace.inputTokens, 0),
+        outputTokens: traces.reduce((sum, trace) => sum + trace.outputTokens, 0),
+        costUsd: traces.reduce((sum, trace) => sum + (trace.costUsd ?? 0), 0),
+        accuracy: traces.some((trace) => trace.costAccuracy === "exact") ? "mixed_or_exact" : traces.some((trace) => trace.costAccuracy === "estimated") ? "estimated" : traces.some((trace) => trace.costAccuracy === "subscription_included") ? "subscription_included" : "unavailable",
+      },
+    };
+  }
+
   createShare(spec: ShareSpec, actor = this.actor()) {
-    const trace = this.db.prepare("SELECT * FROM traces WHERE id=?").get(spec.traceId) as Row | undefined;
+    const trace = this.db.prepare("SELECT t.*,COALESCE(e.title,t.title) share_title FROM traces t LEFT JOIN trace_enrichments e ON e.trace_id=t.id WHERE t.id=?").get(spec.traceId) as Row | undefined;
     if (!trace || trace.owner_id !== actor.principalId) throw new Error("Only the trace owner can share it");
     const shareId = id("share"); const token = randomBytes(18).toString("base64url");
-    this.db.prepare("INSERT INTO shares VALUES (?,?,?,?,?,NULL,0,?)").run(shareId, token, spec.traceId, actor.principalId, json(spec), iso());
-    this.audit(actor.principalId, "share.create", "share", shareId, spec);
-    return { id: shareId, token, url: `/s/${token}`, ...spec };
+    const normalizedSpec = { ...spec, live: spec.live === true };
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("INSERT INTO shares VALUES (?,?,?,?,?,NULL,0,?)").run(shareId, token, spec.traceId, actor.principalId, json(normalizedSpec), iso());
+      if (!normalizedSpec.live) {
+        const view = this.normalizeShareView(spec.content);
+        const payload = this.buildShareSnapshot(spec.traceId, view, spec.selectedEventIds);
+        this.db.prepare("INSERT INTO share_snapshots VALUES (?,?,?,?,?)").run(shareId, view, json(payload), trace.updated_at as SQLInputValue, iso());
+      }
+      this.audit(actor.principalId, "share.create", "share", shareId, normalizedSpec);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    return { id: shareId, token, url: sharePath(String(trace.share_title), token), snapshot: !normalizedSpec.live, ...normalizedSpec };
   }
 
   prepareMutation(action: "share.create" | "skill.create", payload: unknown, actor = this.actor(), ttlSeconds = 300) {
@@ -394,13 +664,15 @@ export class AgentTracesStore {
     return { id: shareId, revoked: true };
   }
 
-  actorForShare(token: string): Actor {
+  actorForShare(pathSegment: string): Actor {
+    const token = shareToken(pathSegment);
     const row = this.db.prepare("SELECT * FROM shares WHERE token=?").get(token) as Row | undefined;
     if (!row || row.revoked_at) throw new Error("Share not found or revoked");
     const spec = parse<ShareSpec>(row.spec, {} as ShareSpec);
     if (spec.expiresAt && Date.parse(spec.expiresAt) <= Date.now()) throw new Error("Share expired");
     if (spec.maxViews && Number(row.view_count) >= spec.maxViews) throw new Error("Share view limit reached");
     this.db.prepare("UPDATE shares SET view_count=view_count+1 WHERE id=?").run(row.id as SQLInputValue);
+    this.db.prepare("INSERT INTO share_access VALUES (?,?,NULL,?)").run(id("access"), row.id as SQLInputValue, iso());
     return { principalId: "share-viewer", teamIds: [], shareToken: token };
   }
 
@@ -440,6 +712,10 @@ export class AgentTracesStore {
   private canAccess(row: Row, actor: Actor, scope?: SearchRequest["scope"]) {
     const own = row.owner_id === actor.principalId;
     const team = actor.teamIds.includes(String(row.namespace_id)) && row.visibility === "team";
+    const teamRole = actor.teamRoles?.[String(row.namespace_id)];
+    const managedRepository = Boolean(row.repository && this.db.prepare("SELECT 1 FROM team_repositories WHERE namespace_id=? AND repository=?")
+      .get(row.namespace_id as SQLInputValue, row.repository as SQLInputValue));
+    const teamAdmin = managedRepository && (teamRole === "owner" || teamRole === "admin");
     const publicAccess = row.visibility === "public";
     let shared = false;
     if (actor.shareToken) {
@@ -447,17 +723,19 @@ export class AgentTracesStore {
       shared = share?.trace_id === row.id;
     }
     if (scope === "mine") return own;
-    if (scope === "team") return team;
+    if (scope === "team") return team || teamAdmin;
     if (scope === "shared_with_me") return shared;
-    return own || team || publicAccess || shared;
+    return own || team || teamAdmin || publicAccess || shared;
   }
 
   private traceRow(row: Row): TraceSummary {
+    const pullRequests = this.pullRequestsForTrace(String(row.id));
     return {
       id: String(row.id), namespaceId: String(row.namespace_id), ownerId: String(row.owner_id), source: row.source as SourceName,
       sessionId: String(row.session_id), title: String(row.title), summary: String(row.summary ?? ""),
       repository: row.repository ? String(row.repository) : undefined, branch: row.branch ? String(row.branch) : undefined,
       pullRequest: row.pull_request === null ? undefined : Number(row.pull_request), visibility: row.visibility as Visibility,
+      pullRequests,
       startedAt: String(row.started_at), updatedAt: String(row.updated_at), eventCount: Number(row.event_count),
       inputTokens: Number(row.input_tokens), outputTokens: Number(row.output_tokens), costUsd: row.cost_usd === null ? undefined : Number(row.cost_usd),
       costAccuracy: row.cost_accuracy as TraceSummary["costAccuracy"],
@@ -472,5 +750,96 @@ export class AgentTracesStore {
 
   private audit(actorId: string, action: string, resourceType: string, resourceId: string, details: unknown) {
     this.db.prepare("INSERT INTO audit VALUES (?,?,?,?,?,?,?)").run(id("audit"), actorId, action, resourceType, resourceId, json(details), iso());
+  }
+
+  private requireTeamAdmin(teamId: string, actor: Actor) {
+    const role = actor.teamRoles?.[teamId] ?? (this.db.prepare("SELECT role FROM memberships WHERE principal_id=? AND namespace_id=?")
+      .get(actor.principalId, teamId) as Row | undefined)?.role;
+    if (role !== "owner" && role !== "admin") throw new Error("Only a team owner or admin can perform this action");
+  }
+
+  private ensureRepository(repository: string) {
+    const canonical = repository.replace(/^git@github\.com:/, "https://github.com/").replace(/\.git$/, "");
+    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+$/.test(canonical)) throw new Error("Repository must be a canonical GitHub URL");
+    const repositoryId = `repo_${stableId(canonical.toLowerCase())}`;
+    this.db.prepare("INSERT INTO repositories(id,canonical_name,created_at) VALUES(?,?,?) ON CONFLICT(canonical_name) DO NOTHING")
+      .run(repositoryId, canonical, iso());
+    return repositoryId;
+  }
+
+  private validConfidence(value: number) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("Link confidence must be between 0 and 1");
+    return value;
+  }
+
+  private pullRequestsForTrace(traceId: string): PullRequestRef[] {
+    return (this.db.prepare(`SELECT pr.id,r.canonical_name repository,pr.number,pr.title,pr.state,pr.url,
+      l.evidence,l.confidence,l.confirmed FROM trace_pull_requests l JOIN pull_requests pr ON pr.id=l.pull_request_id
+      JOIN repositories r ON r.id=pr.repository_id WHERE l.trace_id=? ORDER BY pr.number`).all(traceId) as Row[]).map((row) => ({
+      id: String(row.id), repository: String(row.repository), number: Number(row.number),
+      title: row.title ? String(row.title) : undefined, state: row.state ? String(row.state) : undefined,
+      url: row.url ? String(row.url) : undefined, evidence: String(row.evidence) as LinkEvidence,
+      confidence: Number(row.confidence), confirmed: Boolean(row.confirmed),
+    }));
+  }
+
+  private normalizeShareView(content: ShareSpec["content"]): "overview" | "conversation" | "highlights" | "full_trace" {
+    if (content === "full_transcript") return "full_trace";
+    if (content === "selected_messages") return "highlights";
+    if (content === "metadata" || content === "summary" || content === "skill") return "overview";
+    return content;
+  }
+
+  private buildShareSnapshot(traceId: string, view: "overview" | "conversation" | "highlights" | "full_trace", selectedEventIds?: string[]) {
+    const traceRow = this.db.prepare("SELECT * FROM traces WHERE id=?").get(traceId) as Row | undefined;
+    if (!traceRow) throw new Error("Trace not found");
+    const trace = this.traceRow(traceRow);
+    const allEvents = this.db.prepare("SELECT * FROM events WHERE trace_id=? ORDER BY timestamp,id LIMIT 500").all(traceId) as Row[];
+    const selected = new Set(selectedEventIds ?? []);
+    const eventRows = view === "overview"
+      ? allEvents.filter((event) => ["user", "assistant", "error"].includes(String(event.kind))).slice(0, 12)
+      : view === "conversation"
+        ? allEvents.filter((event) => ["user", "assistant"].includes(String(event.kind)))
+        : view === "highlights"
+          ? allEvents.filter((event) => selected.size ? selected.has(String(event.id)) : ["user", "assistant", "error"].includes(String(event.kind))).slice(0, 100)
+          : allEvents;
+    return {
+      snapshotVersion: 1,
+      view,
+      trace,
+      enrichment: this.getTraceEnrichmentWithoutAuthorization(traceId),
+      events: eventRows.map((event) => ({
+        id: event.id, kind: event.kind, role: event.role, content: event.content, toolName: event.tool_name,
+        toolCallId: event.tool_call_id, command: event.command, model: event.model, timestamp: event.timestamp,
+        operationKind: event.operation_kind, operationStatus: event.operation_status, purpose: event.purpose,
+        parentEventId: event.parent_event_id, childTraceId: event.child_trace_id, durationMs: event.duration_ms,
+        input: parse(event.input, undefined), output: parse(event.output, undefined),
+      })),
+      truncated: eventRows.length < allEvents.length,
+    };
+  }
+
+  private getTraceEnrichmentWithoutAuthorization(traceId: string): TraceEnrichment | null {
+    const row = this.db.prepare("SELECT * FROM trace_enrichments WHERE trace_id=?").get(traceId) as Row | undefined;
+    if (!row) return null;
+    return {
+      traceId, title: String(row.title), summary: String(row.summary), stages: parse(row.stages, []),
+      outcome: String(row.outcome) as TraceEnrichment["outcome"], provider: String(row.provider) as TraceEnrichment["provider"],
+      model: row.model ? String(row.model) : undefined, promptVersion: String(row.prompt_version), generatedAt: String(row.generated_at),
+    };
+  }
+
+  private getShareSnapshot(token: string, traceId: string, requestedView: "metadata" | "summary" | "full_transcript" | "commands" | "files" | "usage") {
+    const share = this.db.prepare("SELECT * FROM shares WHERE token=? AND revoked_at IS NULL").get(token) as Row | undefined;
+    if (!share || share.trace_id !== traceId) throw new Error("Share not found, revoked, or inaccessible");
+    const spec = parse<ShareSpec>(share.spec, {} as ShareSpec);
+    if (spec.expiresAt && Date.parse(spec.expiresAt) <= Date.now()) throw new Error("Share expired");
+    const snapshot = this.db.prepare("SELECT payload FROM share_snapshots WHERE share_id=?").get(share.id as SQLInputValue) as Row | undefined;
+    const payload = snapshot ? parse<Record<string, unknown>>(snapshot.payload, {}) : this.buildShareSnapshot(traceId, this.normalizeShareView(spec.content), spec.selectedEventIds);
+    if (["metadata", "summary", "usage"].includes(requestedView)) return { ...(payload.trace as object), enrichment: payload.enrichment, snapshot: !spec.live };
+    if (this.normalizeShareView(spec.content) === "overview") throw new Error("This share does not grant transcript access");
+    if (requestedView === "commands") return { ...payload, events: (payload.events as Row[]).filter((event) => event.operationKind === "command_run" || event.kind === "command") };
+    if (requestedView === "files") return { ...payload, events: (payload.events as Row[]).filter((event) => String(event.operationKind ?? "").startsWith("file_")) };
+    return { ...payload, snapshot: !spec.live };
   }
 }

@@ -66,3 +66,75 @@ test("single-use confirmation previews protect share and skill mutations", () =>
     store.close();
   } finally { temp.cleanup(); }
 });
+
+test("team setup links are constrained, auditable, and register member devices", () => {
+  const temp = temporary();
+  try {
+    const store = new AgentTracesStore(`${temp.path}/db.sqlite`, temp.path);
+    store.claim("owner@example.com", "Owner");
+    const team = store.createTeam("example-team");
+    const link = store.createSetupLink(team.id, { domain: "example.com", maxUses: 1 });
+    assert.equal(store.listSetupLinks(team.id)[0]?.uses, 0);
+    assert.throws(() => store.redeemSetupLink(link.token, "outsider@elsewhere.com"), /approved email domain/);
+    assert.equal(store.redeemSetupLink(link.token, "member@example.com").teamId, team.id);
+    assert.throws(() => store.redeemSetupLink(link.token, "member@example.com"), /usage limit/);
+    assert.equal(store.listSetupLinks(team.id)[0]?.uses, 1);
+    assert.equal(store.listTeamDevices(team.id).length, 1);
+    store.close();
+  } finally { temp.cleanup(); }
+});
+
+test("pull requests link many traces and roll up usage with explicit provenance", () => {
+  const temp = temporary();
+  try {
+    const store = new AgentTracesStore(`${temp.path}/db.sqlite`, temp.path);
+    store.enqueue("pr-one", [localEnvelope(store, "pr-one", "implement the search index")]);
+    store.enqueue("pr-two", [localEnvelope(store, "pr-two", "verify the search index")]);
+    store.processPending();
+    const repository = "https://github.com/OximyHQ/agenttraces";
+    for (const trace of store.listTraces()) {
+      store.linkTraceToPullRequest(trace.id, { repository, number: 42, title: "Index prior work", state: "open", evidence: "manual", confirmed: true });
+    }
+    const result = store.getPullRequestTrace(repository, 42);
+    assert.equal(result.pullRequest?.number, 42);
+    assert.equal(result.traces.length, 2);
+    assert.equal(result.traces[0]?.pullRequests?.[0]?.evidence, "manual");
+    assert.equal(result.traces[0]?.pullRequests?.[0]?.confirmed, true);
+    store.close();
+  } finally { temp.cleanup(); }
+});
+
+test("lazy enrichment is cached and public shares stay immutable by default", () => {
+  const temp = temporary();
+  try {
+    const store = new AgentTracesStore(`${temp.path}/db.sqlite`, temp.path);
+    store.enqueue("summary-one", [localEnvelope(store, "summary", "build the immutable share")]);
+    store.processPending();
+    const traceId = store.listTraces()[0]!.id;
+    const request = store.prepareTraceEnrichment(traceId);
+    assert.equal(request.promptVersion, "trace-summary-v1");
+    assert.equal(store.getTraceEnrichment(traceId), null);
+    const enrichment = store.cacheTraceEnrichment({
+      traceId,
+      title: "Build immutable trace shares",
+      summary: "Implemented a point-in-time trace share.",
+      stages: [{ kind: "build", text: "Created the share snapshot." }],
+      outcome: "completed",
+      provider: "local_subscription",
+      model: "user-subscription",
+      promptVersion: request.promptVersion,
+    });
+    assert.equal(enrichment?.provider, "local_subscription");
+    const share = store.createShare({ traceId, content: "conversation", audience: "anyone_with_link", agentRetrieve: true, allowContext: false, allowSkillCreation: false });
+    assert.match(share.url, /^\/t\/build-immutable-trace-shares\/[A-Za-z0-9_-]{24}$/);
+    const shareSegment = share.url.slice(3);
+    const sharedBefore = store.getTrace(traceId, store.actorForShare(shareSegment), "full_transcript") as { events: unknown[]; snapshot: boolean };
+    store.enqueue("summary-two", [localEnvelope(store, "summary", "this arrived after the share")]);
+    store.processPending();
+    const sharedAfter = store.getTrace(traceId, store.actorForShare(share.token), "full_transcript") as { events: unknown[]; snapshot: boolean };
+    assert.equal(sharedBefore.snapshot, true);
+    assert.equal(sharedAfter.events.length, sharedBefore.events.length);
+    assert.equal((store.getTrace(traceId, store.actor(), "full_transcript") as { events: unknown[] }).events.length, sharedBefore.events.length + 1);
+    store.close();
+  } finally { temp.cleanup(); }
+});

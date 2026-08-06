@@ -19,7 +19,7 @@ test("MCP stdio executable handles initialize and tools/list lines", () => {
     const input = `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`;
     const result = run("apps/mcp/src/main.ts", [], temp.path, input); assert.equal(result.status, 0, result.stderr);
     const messages = result.stdout.trim().split("\n").map((line) => JSON.parse(line) as { id: number; result: Record<string, unknown> });
-    assert.equal(messages[0]?.id, 1); assert.equal((messages[1]?.result.tools as unknown[]).length, 10);
+    assert.equal(messages[0]?.id, 1); assert.equal((messages[1]?.result.tools as unknown[]).length, 12);
   } finally { temp.cleanup(); }
 });
 

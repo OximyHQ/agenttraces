@@ -32,10 +32,13 @@ test("Claude, Codex, Cursor, Copilot tools and usage normalize to explicit kinds
   const registry = new ParserRegistry();
   const claude = registry.parse(envelope("claude_code", "session_transcript", { type: "assistant", message: { role: "assistant", content: [{ type: "thinking", thinking: "plan" }, { type: "tool_use", id: "1", name: "Edit", input: { path: "a.ts" } }, { type: "tool_result", tool_use_id: "1", content: "ok" }] } }));
   assert.deepEqual(claude.records.map((record) => record.kind), ["reasoning", "tool_call", "tool_result"]);
+  assert.equal(claude.records[1]?.operationKind, "file_edit"); assert.equal(claude.records[1]?.operationStatus, "running"); assert.deepEqual(claude.records[1]?.input, { path: "a.ts" });
   const codex = registry.parse(envelope("codex", "session_transcript", { type: "event_msg", payload: { type: "token_usage", usage: { input_tokens: 10, output_tokens: 4 } } }));
   assert.equal(codex.records[0]?.kind, "usage"); assert.equal(codex.records[0]?.inputTokens, 10);
   const cursor = registry.parse(envelope("cursor", "agent_transcript", { value: [{ role: "assistant", text: "done", toolName: "edit" }] }));
   assert.equal(cursor.records[0]?.kind, "tool_call");
   const copilot = registry.parse(envelope("copilot", "copilot_compact_transcript", { type: "tool.execution_complete", toolCallId: "1", output: "done" }));
   assert.equal(copilot.records[0]?.kind, "tool_result");
+  const tests = registry.parse(envelope("codex", "session_transcript", { type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "2", arguments: { command: "pnpm test" } } }));
+  assert.equal(tests.records[0]?.operationKind, "test_run"); assert.equal(tests.records[0]?.command, "pnpm test");
 });

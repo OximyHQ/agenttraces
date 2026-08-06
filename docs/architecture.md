@@ -13,16 +13,16 @@ Claude / Cursor / Codex / OpenClaw / Conductor / Antigravity / Copilot
                               |
                  Ed25519 signed ingest batch
                               |
-                 HTTP API -> parser worker
+         cloud HTTP API -> object storage -> parser worker
                               |
-            native durable evidence + normalized traces
+        PostgreSQL identity, traces, links, shares, search
                   |              |              |
-                 CLI            MCP        future web UI
+                 CLI            MCP          web + docs
                                   |
                      user's existing agent subscription
 ```
 
-The local store is a single-node implementation of the production seams. It is not a claim that SQLite is the eventual multi-tenant cloud database. `AgentTracesStore`, `LocalCollector`, `ParserRegistry`, and `AgentTracesMcp` keep capture, parsing, authorization, and retrieval behind narrow interfaces so PostgreSQL, object storage, and a durable queue can replace local persistence without changing adapters or tool contracts.
+`AgentTracesStore` is the encrypted local implementation. `CloudRuntime` mirrors the important tenancy, search, team, repository, PR, enrichment, and snapshot-share semantics in PostgreSQL. Compressed native batches are durably written to S3-compatible storage before BullMQ schedules parsing.
 
 ## Trust boundaries
 
@@ -34,14 +34,21 @@ The local store is a single-node implementation of the production seams. It is n
 - Personal traces are private. Team default visibility is owner/admin controlled and begins private.
 - Search filters authorization before returning trace objects. Inaccessible trace IDs use the same not-found response.
 - HTTP query and worker routes fail closed unless their deployment tokens are configured; health returns no installation or tenant identifiers.
-- Direct links are revocable capabilities with expiry/view limits. Their allowed trace view is enforced server-side.
+- Direct links are revocable capabilities with expiry/view limits. External shares are immutable snapshots by default; live shares require an explicit flag.
+- Setup-link and share tokens are stored as hashes. Setup links support email/domain binding, expiry, maximum uses, and revocation.
+- Owners and admins gain access to private team traces only for repositories explicitly registered as team-owned.
+- Pull-request links retain evidence, confidence, and manual confirmation instead of collapsing attribution into a scalar.
 - MCP mutations are prepared first. Confirmation consumes an exact, expiring, single-use preview token.
 - The MCP supplies deterministic evidence; it performs no hosted reasoning and therefore uses the subscription of the calling coding agent.
 
 ## Identity and claim
 
-Installation generates an anonymous principal, personal namespace, device record, and Ed25519 keypair. Claim proves possession of that key and updates the existing principal/device transactionally, preserving trace and namespace IDs. A team namespace is separately owned; choosing it changes the destination for future capture without copying prior personal traces.
+Installation generates an anonymous principal, personal namespace, device record, and Ed25519 keypair. Claim proves possession of that key and updates the existing identity/device transactionally, preserving device, trace, and namespace IDs. If the email already owns another claimed device or web session, the anonymous identity is merged into that account, including memberships and ownership, so all of the person's devices appear together. A team namespace is separately owned; choosing it changes the destination for future capture without copying prior personal traces.
 
-## Production replacement points
+## Web identity
 
-Railway deployment should split the current API, worker, and daemon surfaces. PostgreSQL owns normalized identity/trace/access data, object storage owns compressed native artifacts, and a durable queue owns parser jobs. Device-signature verification, native-envelope versioning, parser replay, authorization, and MCP contracts stay unchanged. The final provider, region, domain, secrets manager, backups, retention scheduler, OAuth callback, and GitHub App values remain explicit deployment inputs.
+The web app uses Better Auth with a Cloudflare D1 adapter, GitHub OAuth when configured, and email/password as a baseline. CLI devices continue to use independent signed device identities and scoped access tokens. A production deployment must map the authenticated web user to its cloud principal at the BFF boundary; dashboard API tokens are server-only and never exposed to the browser.
+
+## Deployment inputs
+
+Deploy the API and worker independently. PostgreSQL owns normalized identity/trace/access data, object storage owns compressed native artifacts, and Redis/BullMQ owns parser jobs. The web app needs its D1 auth database plus Better Auth and optional GitHub OAuth secrets. Provider, region, domain, backups, retention jobs, callback URLs, and the GitHub App installation remain explicit operator inputs.

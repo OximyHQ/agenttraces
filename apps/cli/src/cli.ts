@@ -14,7 +14,7 @@ interface Parsed { command: string; subcommand?: string; positionals: string[]; 
 const HELP = `agenttraces <command> [options]
 
 Capture:  up, status, pause, resume, daemon, doctor, uninstall
-Trace:    sessions, search, show, current, privacy, share, links, usage, pr
+Trace:    sessions, search, show, current, summarize, privacy, share, links, usage, pr
 Account:  login, logout, team, github, config
 Reuse:    skill
 Protocol: mcp
@@ -83,11 +83,23 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
     store.setSetting("capture_enabled", "true");
     const integrations = options["no-integrations"] ? [] : installIntegrations(userHome, typeof options.command === "string" ? options.command : "agenttraces");
     const history = options.history === "all";
+    if (endpoint) {
+      const daemon = new AgentTracesDaemon(store, userHome); await daemon.register(endpoint);
+      const team = typeof options["team-token"] === "string" ? await cloudRequest(store, "/v1/setup-links/redeem", "POST", { token: options["team-token"], email: typeof options.email === "string" ? options.email : undefined }) as { teamId?: string } : null;
+      if (team?.teamId) store.setSetting("cloud.active_namespace_id", team.teamId);
+      const upload = await daemon.upload(endpoint, { fromBeginning: history, maxEvents: integer(options.limit, 10_000) });
+      return {
+        status: "ready", disclosure: "New coding-agent sessions are captured automatically. Personal traces are private by default. Cloud capture advances local cursors only after durable upload acknowledgement.",
+        identity: store.installation(), endpoint, cloud: "canonical", team, history: history ? "imported" : "new_sessions_only",
+        detected: detection.filter((item) => item.detected).map((item) => item.source), integrations,
+        capture: summarizeCapture(upload.results), receipt: upload.receipt,
+      };
+    }
     const capture = collector.scanAndEnqueue({ fromBeginning: history, maxEvents: integer(options.limit, 10_000) });
     const worker = store.processPending();
     return {
       status: "ready", disclosure: "New coding-agent sessions are captured automatically. Personal traces are private by default. A configured cloud endpoint becomes canonical only after durable acknowledgement.",
-      identity: store.installation(), endpoint: endpoint ?? null, cloud: endpoint ? "configured" : "awaiting_deployment_configuration",
+      identity: store.installation(), endpoint: null, cloud: "awaiting_deployment_configuration",
       history: history ? "imported" : "new_sessions_only", detected: detection.filter((item) => item.detected).map((item) => item.source),
       integrations, capture: summarizeCapture(capture.results), receipt: capture.receipt, worker,
     };
@@ -113,6 +125,7 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
     return { results: store.search(request) };
   }
   if (command === "show") return store.getTrace(required(positionals[0] ?? options.id, "trace ID"), store.actor(), (typeof options.view === "string" ? options.view : "summary") as never);
+  if (command === "summarize") return summaryCommand(positionals, options, store);
   if (command === "current") return store.current();
   if (command === "usage") return store.usage(store.actor(), { source: source(options.source), repository: typeof options.repository === "string" ? options.repository : undefined });
   if (command === "links") return shareCommand(["list"], options, store);
@@ -124,8 +137,18 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
   if (command === "config") return configCommand(positionals, options, store);
   if (command === "pr") {
     const snapshot = inspectGit(cwd); const repository = canonicalRepository(snapshot?.remote);
-    const number = typeof options.number === "string" ? Number(options.number) : undefined;
-    return { git: snapshot, traces: store.listTraces().filter((trace) => (!repository || trace.repository === repository) && (!number || trace.pullRequest === number)) };
+    const action = positionals[0] ?? "show";
+    const targetRepository = required(options.repository ?? repository, "repository");
+    const number = Number(required(options.number ?? positionals[action === "show" ? 1 : 2], "pull request number"));
+    if (!Number.isInteger(number) || number < 1) throw new Error("Invalid pull request number");
+    if (action === "link") return store.linkTraceToPullRequest(required(positionals[1] ?? options.trace, "trace ID"), {
+      repository: targetRepository, number, title: typeof options.title === "string" ? options.title : undefined,
+      state: typeof options.state === "string" ? options.state : undefined, url: typeof options.url === "string" ? options.url : undefined,
+      evidence: (typeof options.evidence === "string" ? options.evidence : "manual") as never,
+      confidence: typeof options.confidence === "string" ? Number(options.confidence) : undefined, confirmed: options.confirmed !== "false",
+    });
+    if (action !== "show") throw new Error(`Unknown pr action: ${action}`);
+    return { git: snapshot, ...store.getPullRequestTrace(targetRepository, number) };
   }
   if (command === "doctor") return doctor(store, userHome, cwd);
   if (command === "daemon") {
@@ -165,7 +188,25 @@ function shareCommand(positionals: string[], options: Record<string, string | bo
   if (action === "list") return { shares: store.listShares() };
   if (action === "revoke") return store.revokeShare(required(positionals[1] ?? options.id, "share ID"));
   const traceId = action === "create" ? required(positionals[1] ?? options.trace, "trace ID") : action;
-  return store.createShare({ traceId, content: (typeof options.content === "string" ? options.content : "summary") as never, audience: (typeof options.audience === "string" ? options.audience : "anyone_with_link") as never, emails: typeof options.emails === "string" ? options.emails.split(",") : undefined, teamId: typeof options.team === "string" ? options.team : undefined, agentRetrieve: options["agent-retrieve"] !== "false", allowContext: options["allow-context"] === true, allowSkillCreation: options["allow-skill"] === true, expiresAt: typeof options.expires === "string" ? options.expires : undefined, maxViews: typeof options["max-views"] === "string" ? Number(options["max-views"]) : undefined });
+  return store.createShare({ traceId, content: (typeof options.content === "string" ? options.content : "overview") as never, audience: (typeof options.audience === "string" ? options.audience : "anyone_with_link") as never, emails: typeof options.emails === "string" ? options.emails.split(",") : undefined, teamId: typeof options.team === "string" ? options.team : undefined, agentRetrieve: options["agent-retrieve"] !== "false", allowContext: options["allow-context"] === true, allowSkillCreation: options["allow-skill"] === true, live: options.live === true, selectedEventIds: typeof options.events === "string" ? options.events.split(",") : undefined, expiresAt: typeof options.expires === "string" ? options.expires : undefined, maxViews: typeof options["max-views"] === "string" ? Number(options["max-views"]) : undefined });
+}
+
+function summaryCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
+  const action = positionals[0] ?? "prepare";
+  const traceId = required(positionals[1] ?? options.trace, "trace ID");
+  if (action === "prepare") return store.prepareTraceEnrichment(traceId);
+  if (action === "show") return store.getTraceEnrichment(traceId);
+  if (action === "save") return store.cacheTraceEnrichment({
+    traceId,
+    title: required(options.title, "title"),
+    summary: required(options.summary, "summary"),
+    stages: typeof options.stages === "string" ? JSON.parse(options.stages) as never : [],
+    outcome: (typeof options.outcome === "string" ? options.outcome : "unknown") as never,
+    provider: "local_subscription",
+    model: typeof options.model === "string" ? options.model : undefined,
+    promptVersion: typeof options["prompt-version"] === "string" ? options["prompt-version"] : "trace-summary-v1",
+  });
+  throw new Error(`Unknown summarize action: ${action}`);
 }
 
 function privacyCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
@@ -197,7 +238,14 @@ async function teamCommand(positionals: string[], options: Record<string, string
     if (cloud?.id) { store.setSetting(`cloud.team.map.${local.id}`, cloud.id); store.setSetting("cloud.active_namespace_id", cloud.id); }
     return { ...local, defaultVisibility, cloud };
   }
-  if (action === "join") return store.joinTeam(required(positionals[1] ?? options.id, "team ID"), (typeof options.role === "string" ? options.role : "member") as never);
+  if (action === "join") {
+    const token = typeof options.token === "string" ? options.token : undefined;
+    if (token && store.setting("endpoint") && store.setting("cloud.access_token")) {
+      const joined = await cloudRequest(store, "/v1/setup-links/redeem", "POST", { token, email: typeof options.email === "string" ? options.email : undefined }) as { teamId?: string };
+      if (joined.teamId) store.setSetting("cloud.active_namespace_id", joined.teamId); return joined;
+    }
+    return token ? store.redeemSetupLink(token, typeof options.email === "string" ? options.email : undefined) : store.joinTeam(required(positionals[1] ?? options.id, "team ID"), (typeof options.role === "string" ? options.role : "member") as never);
+  }
   if (action === "use") {
     const localId = positionals[1] ?? (typeof options.id === "string" ? options.id : undefined); const local = store.useNamespace(localId);
     const cloudId = local.kind === "personal" ? store.setting("cloud.namespace_id") : store.setting(`cloud.team.map.${localId}`);
@@ -209,20 +257,57 @@ async function teamCommand(positionals: string[], options: Record<string, string
     const cloud = cloudId ? await cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudId)}/policy`, "PATCH", { defaultVisibility: visibility }, false) : null;
     return { ...local, cloud };
   }
+  if (action === "setup-link") {
+    const subaction = positionals[1] ?? "list";
+    const localTeamId = subaction === "revoke" ? undefined : required(positionals[2] ?? options.team, "team ID");
+    const cloudTeamId = localTeamId ? store.setting(`cloud.team.map.${localTeamId}`) : undefined;
+    const setupOptions = {
+      email: typeof options.email === "string" ? options.email : undefined,
+      domain: typeof options.domain === "string" ? options.domain : undefined,
+      maxUses: typeof options["max-uses"] === "string" ? Number(options["max-uses"]) : undefined,
+      expiresAt: typeof options.expires === "string" ? options.expires : undefined,
+    };
+    if (subaction === "create") return cloudTeamId ? cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/setup-links`, "POST", setupOptions) : store.createSetupLink(localTeamId!, setupOptions);
+    if (subaction === "list") return cloudTeamId ? cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/setup-links`, "GET") : { setupLinks: store.listSetupLinks(localTeamId!) };
+    if (subaction === "revoke") return store.setting("endpoint") && store.setting("cloud.access_token")
+      ? cloudRequest(store, `/v1/setup-links/${encodeURIComponent(required(positionals[2] ?? options.id, "setup link ID"))}/revoke`, "POST", {})
+      : store.revokeSetupLink(required(positionals[2] ?? options.id, "setup link ID"));
+    throw new Error(`Unknown setup-link action: ${subaction}`);
+  }
+  if (action === "repository") {
+    const subaction = positionals[1] ?? "list";
+    const teamId = required(options.team ?? positionals[2], "team ID");
+    const cloudTeamId = store.setting(`cloud.team.map.${teamId}`);
+    if (subaction === "add") {
+      const repository = required(options.repository ?? positionals[3], "repository");
+      return cloudTeamId ? cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/repositories`, "POST", { repository }) : store.addTeamRepository(teamId, repository);
+    }
+    if (subaction === "list") return cloudTeamId ? cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/repositories`, "GET") : { repositories: store.listTeamRepositories(teamId) };
+    throw new Error(`Unknown repository action: ${subaction}`);
+  }
+  if (action === "devices") {
+    const teamId = required(positionals[1] ?? options.team, "team ID"); const cloudTeamId = store.setting(`cloud.team.map.${teamId}`);
+    return cloudTeamId ? cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/devices`, "GET") : { devices: store.listTeamDevices(teamId) };
+  }
   throw new Error(`Unknown team action: ${action}`);
 }
 
-async function cloudRequest(store: AgentTracesStore, path: string, method: string, payload: unknown, requiredCloud = true) {
+async function cloudRequest(store: AgentTracesStore, path: string, method: string, payload?: unknown, requiredCloud = true) {
   const endpoint = store.setting("endpoint"); const token = store.setting("cloud.access_token");
   if (!endpoint || !token) { if (requiredCloud) throw new Error("Cloud endpoint and device access token are required"); return null; }
-  const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(payload) });
+  const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: method === "GET" || payload === undefined ? undefined : JSON.stringify(payload) });
   if (!response.ok) throw new Error(`Cloud request failed: ${response.status} ${await response.text()}`); return response.json();
 }
 
-function githubCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
+async function githubCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
   const action = positionals[0] ?? "status";
   if (action === "status") return { connected: Boolean(store.setting("github.installation_id")), installationId: store.setting("github.installation_id") ?? null };
-  if (action === "connect") { const installationId = required(options.installation ?? positionals[1], "GitHub installation ID"); store.setSetting("github.installation_id", installationId); return { connected: true, installationId }; }
+  if (action === "connect") {
+    const installationId = required(options.installation ?? positionals[1], "GitHub installation ID"); store.setSetting("github.installation_id", installationId);
+    const localTeamId = typeof options.team === "string" ? options.team : undefined; const cloudTeamId = localTeamId ? store.setting(`cloud.team.map.${localTeamId}`) : undefined;
+    const cloud = cloudTeamId ? await cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudTeamId)}/github/installations`, "POST", { installationId, accountLogin: required(options.account, "GitHub account login"), permissions: { contents: "read", pull_requests: "read", metadata: "read" } }) : null;
+    return { connected: true, installationId, cloud };
+  }
   if (action === "disconnect") { store.setSetting("github.installation_id", ""); return { connected: false }; }
   throw new Error(`Unknown GitHub action: ${action}`);
 }

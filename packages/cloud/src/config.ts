@@ -6,6 +6,8 @@ export interface CloudConfig {
   s3Bucket: string;
   s3AccessKeyId: string;
   s3SecretAccessKey: string;
+  webAuthSecret?: string;
+  githubWebhookSecret?: string;
 }
 
 function required(name: string, alternatives: string[] = []) {
@@ -22,5 +24,7 @@ export function cloudConfig(): CloudConfig {
     s3Bucket: required("S3_BUCKET", ["BUCKET_NAME"]),
     s3AccessKeyId: required("S3_ACCESS_KEY_ID", ["BUCKET_ACCESS_KEY_ID"]),
     s3SecretAccessKey: required("S3_SECRET_ACCESS_KEY", ["BUCKET_SECRET_ACCESS_KEY"]),
+    webAuthSecret: process.env.AGENTTRACES_WEB_AUTH_SECRET,
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
   };
 }

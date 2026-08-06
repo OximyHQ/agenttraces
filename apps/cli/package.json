@@ -21,7 +21,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OximyHQ/agenttraces.git"

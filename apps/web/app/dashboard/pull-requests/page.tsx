@@ -1,0 +1,5 @@
+import Link from "next/link";
+import { DashboardShell } from "@/components/dashboard-shell";
+import { demoTraces } from "@/lib/product-data";
+
+export default function PullRequests() { const linked = demoTraces.filter((trace) => trace.pullRequests.length); return <DashboardShell section="pull-requests" preview><div className="page-heading"><div><p className="context-line">GitHub</p><h1>Pull requests and their agent work</h1></div><Link className="text-action" href="/docs/github">Configure GitHub App</Link></div><p className="page-description">Open a pull request to see every linked coding session, why it was linked, and the aggregate reported usage.</p><div className="pr-list">{[7, 4].map((number, index) => <Link href={`/dashboard/pull-requests/${number}`} key={number}><span className="pr-state">○</span><span><strong>#{number} {index ? "Bound collector backfill batches" : "Connect traces to pull requests"}</strong><small>OximyHQ/agenttraces · {index ? "2" : linked.length} linked traces</small></span><span className="pr-usage">{index ? "117k" : "280k"}<small>tokens</small></span><b>→</b></Link>)}</div></DashboardShell>; }

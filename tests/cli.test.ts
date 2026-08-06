@@ -27,6 +27,16 @@ test("CLI personal install, capture, claim, search, privacy, sharing, skills, te
     assert.equal((await executeCli(["skill", "create", "--name", "cli-skill", "--traces", traceId, "--instructions", "Inspect|Verify", "--json"], context)).code, 0);
     const team = await executeCli(["team", "create", "cli-team", "--json"], context); const teamId = (team.value as { id: string }).id;
     assert.equal((await executeCli(["team", "policy", teamId, "--visibility", "team", "--json"], context)).code, 0);
+    const setup = await executeCli(["team", "setup-link", "create", teamId, "--domain", "example.com", "--max-uses", "3", "--json"], context);
+    assert.match((setup.value as { url: string }).url, /^\/join\//);
+    assert.equal((await executeCli(["team", "repository", "add", teamId, "https://github.com/OximyHQ/agenttraces", "--json"], context)).code, 0);
+    assert.equal(((await executeCli(["team", "devices", teamId, "--json"], context)).value as { devices: unknown[] }).devices.length, 1);
+    const prepared = await executeCli(["summarize", "prepare", traceId, "--json"], context);
+    assert.equal((prepared.value as { promptVersion: string }).promptVersion, "trace-summary-v1");
+    assert.equal((await executeCli(["summarize", "save", traceId, "--title", "CLI trace", "--summary", "Captured and indexed the CLI session.", "--outcome", "completed", "--json"], context)).code, 0);
+    assert.equal((await executeCli(["pr", "link", traceId, "--repository", "https://github.com/OximyHQ/agenttraces", "--number", "7", "--title", "CLI trace", "--json"], context)).code, 0);
+    const pullRequest = await executeCli(["pr", "show", "--repository", "https://github.com/OximyHQ/agenttraces", "--number", "7", "--json"], context);
+    assert.equal((pullRequest.value as { traces: unknown[] }).traces.length, 1);
     assert.equal((await executeCli(["github", "connect", "--installation", "123", "--json"], context)).code, 0);
     assert.equal((await executeCli(["doctor", "--json"], context)).code, 0);
     const uninstall = await executeCli(["uninstall", "--json"], context); assert.equal((uninstall.value as { localDataPreserved: boolean }).localDataPreserved, true);

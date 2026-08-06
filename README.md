@@ -1,48 +1,85 @@
 # AgentTraces
 
-AgentTraces is permissioned memory for coding agents. A local daemon discovers supported session artifacts, scrubs secrets, durably encrypts pending work, and uploads signed idempotent batches to a cloud backend. A CLI and MCP server retrieve the resulting evidence while the coding agent already running under the user's Claude, Codex, Cursor, or Copilot subscription does the reasoning.
+AgentTraces is searchable, permissioned history for coding agents. It captures native sessions from the tools developers already use, connects them to repositories and pull requests, and makes the resulting evidence available through a CLI, an MCP server, a web dashboard, and immutable share links.
 
-The product name and repository are plural: `AgentTraces`, `agenttraces`, and `oximyhq/agenttraces`.
+The current coding agent does the reasoning. AgentTraces retrieves the smallest authorized slice of earlier work and preserves its provenance.
 
-## What works locally
+## Start locally
 
-- Seven source adapters: Claude Code, Cursor, Codex, OpenClaw, Conductor, Antigravity, and GitHub Copilot.
-- Thirty-one native file/row types across incremental JSONL, full text/JSON/binary files, fold-style streams, and bounded read-only SQLite queries.
-- Secret scrubbing before durable enqueue and again before parsing.
-- AES-256-GCM local spool encryption, Ed25519 device identity, signed remote ingest, idempotent batches, parser retries, and normalized trace storage.
-- Anonymous install and later claim, owner-defined team visibility, permission-filtered search, capability shares, usage rollups, Git evidence, and reusable skills.
-- CLI, stdio MCP, HTTP API, continuous daemon, and parser worker entrypoints.
-- Ten MCP tools. Share and skill mutations require short-lived, single-use confirmation tokens.
-- Safe real-machine verification reads at most two artifacts per installed source, prints no source content, and never advances capture cursors.
+```bash
+npx agenttraces up
+```
 
-The current backend uses SQLite so the complete system can run and be tested on one machine. The storage seam is intentionally isolated for the production Postgres/object-store implementation when Railway deployment is selected. npm publication, Railway, the production domain/region, and final website/dashboard design are deferred by product decision.
+Or give this to a coding agent:
 
-## Run
+> Install AgentTraces for this machine, run its doctor checks, and tell me exactly what will be captured before enabling it.
+
+Capture starts with an anonymous device identity. Personal traces are private by default, the pending local spool is encrypted, and the device can be claimed later without changing its trace IDs.
+
+Shared trace links use `/t/<readable-title>/<opaque-token>` so the work is recognizable when the link travels. The title slug is presentation only; the revocable token remains the permission capability.
+
+```bash
+agenttraces doctor --json
+agenttraces search "the queue timeout investigation" --json
+agenttraces show TRACE_ID --view full_transcript --json
+```
+
+## What is included
+
+- Native collectors for Claude Code, Codex, Cursor, OpenClaw, Conductor, Antigravity, and GitHub Copilot.
+- Incremental JSONL, bounded SQLite, text, JSON, and binary artifact readers.
+- Secret scrubbing, AES-256-GCM spool encryption, Ed25519 device identity, signed ingest, and idempotent batches.
+- Permission-first local and PostgreSQL search with bounded snippets and trace provenance.
+- Twelve local MCP tools for search, retrieval, PR history, usage, lazy subscription-powered enrichment, sharing, and reusable skills.
+- Team setup links with email/domain constraints, expiry, usage limits, revocation, registered devices, and owner-defined policy.
+- Many-to-many trace, commit, repository, and pull-request linkage with visible evidence and confidence.
+- Immutable public shares by default, with overview, conversation, highlights, and full-trace views.
+- A Better Auth web sign-in surface, team dashboard, semantic trace viewer, pull-request history, documentation, and public trace pages.
+- PostgreSQL, Redis/BullMQ, and S3-compatible cloud services for normalized storage and durable native batches.
+
+## Repository map
+
+```text
+apps/cli       npm command, installation, team, trace, PR, and share workflows
+apps/mcp       newline-delimited stdio MCP transport
+apps/api       cloud HTTP and remote MCP service
+apps/daemon    continuous local capture, retry, and upload loop
+apps/worker    queued native-batch parser
+apps/web       Next/Vinext website, docs, Better Auth, dashboard, and public shares
+packages/core  contracts, parsers, collector, encrypted local store, search, and permissions
+packages/cloud PostgreSQL schema, Redis queue, object storage, cloud authorization, and APIs
+tests          parser, collector, store, CLI, MCP, cloud routing, tenancy, and entrypoint tests
+```
+
+The terminology and invariants are in [CONTEXT.md](CONTEXT.md). Architecture decisions are recorded under [docs/adr](docs/adr), with the broader [architecture](docs/architecture.md), [search design](docs/search-design.md), and [test matrix](docs/test-matrix.md) alongside them. The interface contract is [DESIGN.md](DESIGN.md); [design references](docs/design-references.md) record how givemeanode.com and the supplied traces.com examples informed the work without copying either product.
+
+## Develop
+
+Requirements: Node.js 22.13 or newer and pnpm 10.
 
 ```bash
 pnpm install
 pnpm verify
 pnpm readiness
-
-pnpm agenttraces -- up --history all --json
-pnpm agenttraces -- search "earlier cache work" --json
-pnpm mcp
 ```
 
-`agenttraces up` captures new sessions by default and asks for historical intent through `--history all`. Personal traces default to private. Team traces default to private until an owner or admin sets the team policy.
+The web app is intentionally a standalone npm workspace:
 
-## Repository
-
-```text
-apps/cli       command surface and installation workflow
-apps/mcp       newline-delimited stdio MCP transport
-apps/api       signed ingest and permissioned query HTTP service
-apps/daemon    continuous capture, spool, retry, and upload loop
-apps/worker    parser/normalization worker entrypoint
-apps/web       deferred visual prototype; not part of the CLI/MCP build
-packages/core  contracts, adapters, collector, identity, storage, search, permissions
-tests          parser, capture, API, CLI, MCP, security, and tenancy tests
-scripts        bounded real-machine verification and readiness inventory
+```bash
+cd apps/web
+npm install
+npm run db:local
+npm test
 ```
 
-See [architecture](docs/architecture.md), [test matrix](docs/test-matrix.md), and the original [action plan](docs/action-plan.md).
+For sign-in, configure `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`; GitHub OAuth additionally needs `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. The dashboard reads `AGENTTRACES_API_URL` and a server-side `AGENTTRACES_API_TOKEN`. Without them, operational pages show clearly labeled preview data.
+
+The cloud API needs PostgreSQL, Redis, and S3-compatible credentials described in [docs/architecture.md](docs/architecture.md). Deployment-specific resource creation and secrets stay outside this repository.
+
+## Security and privacy
+
+Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Share and reusable-skill mutations require explicit confirmation in MCP. External shares are point-in-time snapshots unless `live` is deliberately enabled. Cost is always labeled as exact, estimated, subscription-included, or unavailable; missing price data is never represented as zero.
+
+## Contributing
+
+AgentTraces is licensed under [Apache License 2.0](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).

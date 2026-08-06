@@ -1,0 +1,6 @@
+BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters
+BETTER_AUTH_URL=http://localhost:3000
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+AGENTTRACES_API_URL=http://localhost:8787
+AGENTTRACES_WEB_AUTH_SECRET=must-match-the-cloud-api
