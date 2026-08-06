@@ -1,8 +1,37 @@
 {
-  "name": "@agenttraces/cli",
+  "name": "agenttraces",
   "version": "0.1.0",
-  "private": true,
+  "description": "Capture and search coding-agent traces from the CLI and MCP",
   "type": "module",
-  "bin": { "agenttraces": "./dist/main.js" },
-  "dependencies": { "@agenttraces/core": "workspace:*" }
+  "bin": {
+    "agenttraces": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/main.ts --format esm --platform node --target node22 --sourcemap --clean && node ../../scripts/fix-node-builtins.mjs dist/main.js",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OximyHQ/agenttraces.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OximyHQ/agenttraces/issues"
+  },
+  "homepage": "https://github.com/OximyHQ/agenttraces#readme",
+  "devDependencies": {
+    "@agenttraces/core": "workspace:*",
+    "tsup": "8.5.0"
+  }
 }

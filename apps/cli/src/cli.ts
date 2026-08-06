@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   AgentTracesDaemon, AgentTracesStore, LocalCollector, ParserRegistry, canonicalRepository,
-  inspectGit, installIntegrations, isSourceName, removeIntegrations, runtimePaths,
+  inspectGit, installIntegrations, isSourceName, removeIntegrations, runMcpStdio, runRemoteMcpStdio, runtimePaths,
   type SourceName, type Visibility,
 } from "@agenttraces/core";
 
@@ -95,10 +95,23 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
   if (command === "status") return status(store, userHome);
   if (command === "pause") { store.setSetting("capture_enabled", "false"); return { captureEnabled: false }; }
   if (command === "resume") { store.setSetting("capture_enabled", "true"); return { captureEnabled: true }; }
-  if (command === "login") return store.claim(required(options.email ?? positionals[0], "email"), typeof options.name === "string" ? options.name : undefined);
+  if (command === "login") {
+    const email = required(options.email ?? positionals[0], "email"); const name = typeof options.name === "string" ? options.name : undefined;
+    const local = store.claim(email, name); const cloud = await cloudRequest(store, "/v1/claim", "POST", { email, name }, false);
+    return { ...local, cloud };
+  }
   if (command === "logout") { store.setSetting("auth_session", "none"); return { loggedOut: true, deviceClaimPreserved: true }; }
   if (command === "sessions") return { traces: store.listTraces(store.actor(), { source: source(options.source), repository: typeof options.repository === "string" ? options.repository : undefined, limit: integer(options.limit, 50) }) };
-  if (command === "search") return { results: store.search({ query: positionals.join(" ") || required(options.query, "query"), source: source(options.source), repository: typeof options.repository === "string" ? options.repository : undefined, scope: typeof options.scope === "string" ? options.scope as never : undefined, limit: integer(options.limit, 10) }) };
+  if (command === "search") {
+    const request = { query: positionals.join(" ") || required(options.query, "query"), source: source(options.source), repository: typeof options.repository === "string" ? options.repository : undefined, scope: typeof options.scope === "string" ? options.scope as never : undefined, limit: integer(options.limit, 10) };
+    const endpoint = store.setting("endpoint"); const accessToken = store.setting("cloud.access_token");
+    if (endpoint && accessToken && options.local !== true) {
+      const response = await fetch(`${endpoint.replace(/\/$/, "")}/v1/search`, { method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: JSON.stringify(request) });
+      if (!response.ok) throw new Error(`Remote search failed: ${response.status} ${await response.text()}`);
+      return response.json();
+    }
+    return { results: store.search(request) };
+  }
   if (command === "show") return store.getTrace(required(positionals[0] ?? options.id, "trace ID"), store.actor(), (typeof options.view === "string" ? options.view : "summary") as never);
   if (command === "current") return store.current();
   if (command === "usage") return store.usage(store.actor(), { source: source(options.source), repository: typeof options.repository === "string" ? options.repository : undefined });
@@ -119,13 +132,23 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
     if (store.setting("capture_enabled") === "false") return { status: "paused" };
     const daemon = new AgentTracesDaemon(store, userHome);
     if (positionals[0] === "upload") return daemon.upload(required(options.endpoint ?? store.setting("endpoint"), "endpoint"), { fromBeginning: options.history === "all", maxEvents: integer(options.limit, 10_000) });
+    if (positionals[0] === "backfill") return daemon.backfill(required(options.endpoint ?? store.setting("endpoint"), "endpoint"), { maxEvents: integer(options.limit, 10_000), maxPages: integer(options.pages, 10_000) });
+    if (positionals[0] === "run") {
+      const controller = new AbortController(); const stop = () => controller.abort(); process.once("SIGINT", stop); process.once("SIGTERM", stop);
+      try { return await daemon.runWatching({ endpoint: typeof options.endpoint === "string" ? options.endpoint : store.setting("endpoint"), signal: controller.signal, onCycle: (value) => process.stderr.write(`${JSON.stringify(value)}\n`) }); }
+      finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+    }
     return daemon.runOnce({ fromBeginning: options.history === "all", maxEvents: integer(options.limit, 10_000) });
   }
   if (command === "uninstall") {
     store.setSetting("capture_enabled", "false");
     return { integrations: removeIntegrations(userHome), captureEnabled: false, localDataPreserved: true, note: "Delete the AgentTraces state directory manually only after export if permanent erasure is intended." };
   }
-  if (command === "mcp") return { command: "Use the dedicated @agenttraces/mcp stdio entrypoint", stateHome: store.stateDirectory };
+  if (command === "mcp") {
+    const endpoint = store.setting("endpoint"); const token = store.setting("cloud.access_token");
+    if (endpoint && token && options.local !== true) await runRemoteMcpStdio(endpoint, token); else await runMcpStdio(store);
+    return { stopped: true };
+  }
   throw new Error(`Unknown command: ${command}`);
 }
 
@@ -164,14 +187,36 @@ function skillCommand(positionals: string[], options: Record<string, string | bo
   throw new Error(`Unknown skill action: ${action}`);
 }
 
-function teamCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
+async function teamCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
   const action = positionals[0] ?? "list";
   if (action === "list") return { teams: store.listTeams(), activeTeamId: store.setting("active_team_id") || null };
-  if (action === "create") return store.createTeam(required(positionals[1] ?? options.slug, "team slug"));
+  if (action === "create") {
+    const slug = required(positionals[1] ?? options.slug, "team slug"); const local = store.createTeam(slug);
+    const defaultVisibility = (typeof options.visibility === "string" ? options.visibility : "private") as "private" | "team";
+    const cloud = await cloudRequest(store, "/v1/teams", "POST", { slug, defaultVisibility }, false) as { id?: string } | null;
+    if (cloud?.id) { store.setSetting(`cloud.team.map.${local.id}`, cloud.id); store.setSetting("cloud.active_namespace_id", cloud.id); }
+    return { ...local, defaultVisibility, cloud };
+  }
   if (action === "join") return store.joinTeam(required(positionals[1] ?? options.id, "team ID"), (typeof options.role === "string" ? options.role : "member") as never);
-  if (action === "use") return store.useNamespace(positionals[1] ?? (typeof options.id === "string" ? options.id : undefined));
-  if (action === "policy") return store.setTeamPolicy(required(positionals[1] ?? options.id, "team ID"), required(options.visibility, "visibility") as "private" | "team");
+  if (action === "use") {
+    const localId = positionals[1] ?? (typeof options.id === "string" ? options.id : undefined); const local = store.useNamespace(localId);
+    const cloudId = local.kind === "personal" ? store.setting("cloud.namespace_id") : store.setting(`cloud.team.map.${localId}`);
+    if (cloudId) store.setSetting("cloud.active_namespace_id", cloudId); return { ...local, cloudNamespaceId: cloudId ?? null };
+  }
+  if (action === "policy") {
+    const localId = required(positionals[1] ?? options.id, "team ID"); const visibility = required(options.visibility, "visibility") as "private" | "team";
+    const local = store.setTeamPolicy(localId, visibility); const cloudId = store.setting(`cloud.team.map.${localId}`);
+    const cloud = cloudId ? await cloudRequest(store, `/v1/teams/${encodeURIComponent(cloudId)}/policy`, "PATCH", { defaultVisibility: visibility }, false) : null;
+    return { ...local, cloud };
+  }
   throw new Error(`Unknown team action: ${action}`);
+}
+
+async function cloudRequest(store: AgentTracesStore, path: string, method: string, payload: unknown, requiredCloud = true) {
+  const endpoint = store.setting("endpoint"); const token = store.setting("cloud.access_token");
+  if (!endpoint || !token) { if (requiredCloud) throw new Error("Cloud endpoint and device access token are required"); return null; }
+  const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(`Cloud request failed: ${response.status} ${await response.text()}`); return response.json();
 }
 
 function githubCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {

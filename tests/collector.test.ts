@@ -61,3 +61,20 @@ test("SQLite capture establishes a high-water mark then incrementally reads new 
     store.close();
   } finally { temp.cleanup(); }
 });
+
+test("history pages advance the byte cursor without dropping records beyond the page limit", () => {
+  const temp = temporary();
+  try {
+    const userHome = `${temp.path}/user`; const state = `${temp.path}/state`; const path = `${userHome}/.codex/sessions/2026/08/04/large.jsonl`;
+    write(path, Array.from({ length: 25 }, (_, index) => JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: `history-${index}` } })).join("\n") + "\n");
+    const store = new AgentTracesStore(`${state}/db.sqlite`, state); const collector = new LocalCollector(store, userHome);
+    let total = 0;
+    for (let page = 0; page < 10; page++) {
+      const result = collector.scanAndEnqueue({ sources: ["codex"], fromBeginning: page === 0, maxEvents: 7 });
+      total += result.receipt?.accepted ?? 0; store.processPending();
+      if (!result.receipt?.accepted) break;
+    }
+    assert.equal(total, 25); assert.equal(store.listTraces()[0]?.eventCount, 25);
+    store.close();
+  } finally { temp.cleanup(); }
+});

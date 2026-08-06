@@ -1,0 +1,17 @@
+{
+  "name": "@agenttraces/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@agenttraces/core": "workspace:*",
+    "@aws-sdk/client-s3": "3.883.0",
+    "bullmq": "5.58.5",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5"
+  }
+}

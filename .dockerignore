@@ -1,0 +1,10 @@
+.git
+.context
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.vinext
+**/.wrangler
+coverage
+*.log
