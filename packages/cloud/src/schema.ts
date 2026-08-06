@@ -238,6 +238,32 @@ CREATE TABLE IF NOT EXISTS share_access (
   viewed_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS mutation_confirmations (
+  token_hash text PRIMARY KEY,
+  principal_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  action text NOT NULL,
+  payload jsonb NOT NULL,
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS reusable_skills (
+  id text PRIMARY KEY,
+  namespace_id text NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+  owner_id text NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  instructions jsonb NOT NULL DEFAULT '[]',
+  validation jsonb NOT NULL DEFAULT '[]',
+  trace_ids jsonb NOT NULL DEFAULT '[]',
+  visibility text NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','team','direct_link','public')),
+  archived_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reusable_skills_lookup_idx ON reusable_skills(owner_id,created_at DESC) WHERE archived_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS github_installations (
   id text PRIMARY KEY,
   namespace_id text NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,

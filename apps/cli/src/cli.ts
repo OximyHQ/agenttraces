@@ -61,7 +61,7 @@ export async function executeCli(argv: string[], context: CliContext = {}): Prom
   let store: AgentTracesStore | undefined;
   try {
     if (["help", "--help", "-h"].includes(parsed.command)) { io.out(HELP); return { code: 0, value: HELP }; }
-    if (parsed.command === "version") { io.out("0.1.0"); return { code: 0, value: "0.1.0" }; }
+    if (parsed.command === "version") { io.out("0.2.0"); return { code: 0, value: "0.2.0" }; }
     store = new AgentTracesStore(state.database, state.home);
     const value = await command(parsed, store, userHome, context.cwd ?? process.cwd());
     if (parsed.command !== "mcp") io.out(display(value, asJson));
@@ -76,12 +76,13 @@ export async function executeCli(argv: string[], context: CliContext = {}): Prom
 async function command(parsed: Parsed, store: AgentTracesStore, userHome: string, cwd: string): Promise<unknown> {
   const { command, options, positionals } = parsed;
   if (command === "up") {
+    if (!store.setting("capture.started_at")) store.setSetting("capture.started_at", new Date().toISOString());
     const collector = new LocalCollector(store, userHome);
     const detection = collector.detect();
     const endpoint = typeof options.endpoint === "string" ? options.endpoint : process.env.AGENTTRACES_ENDPOINT;
     if (endpoint) store.setSetting("endpoint", endpoint);
     store.setSetting("capture_enabled", "true");
-    const integrations = options["no-integrations"] ? [] : installIntegrations(userHome, typeof options.command === "string" ? options.command : "agenttraces");
+    const integrations = options["no-integrations"] ? [] : installIntegrations(userHome, typeof options.command === "string" ? options.command : "npx");
     const history = options.history === "all";
     if (endpoint) {
       const daemon = new AgentTracesDaemon(store, userHome); await daemon.register(endpoint);
@@ -183,12 +184,20 @@ function status(store: AgentTracesStore, userHome: string) {
   return { installation: store.installation(), endpoint: store.setting("endpoint") ?? null, spool: store.spoolStatus(), traces: store.listTraces().length, sources: new LocalCollector(store, userHome).detect(), teams: store.listTeams() };
 }
 
-function shareCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
+async function shareCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
   const action = positionals[0] ?? "list";
   if (action === "list") return { shares: store.listShares() };
-  if (action === "revoke") return store.revokeShare(required(positionals[1] ?? options.id, "share ID"));
+  if (action === "revoke") {
+    const shareId = required(positionals[1] ?? options.id, "share ID");
+    return store.setting("endpoint") && store.setting("cloud.access_token")
+      ? cloudRequest(store, `/v1/shares/${encodeURIComponent(shareId)}/revoke`, "POST", {})
+      : store.revokeShare(shareId);
+  }
   const traceId = action === "create" ? required(positionals[1] ?? options.trace, "trace ID") : action;
-  return store.createShare({ traceId, content: (typeof options.content === "string" ? options.content : "overview") as never, audience: (typeof options.audience === "string" ? options.audience : "anyone_with_link") as never, emails: typeof options.emails === "string" ? options.emails.split(",") : undefined, teamId: typeof options.team === "string" ? options.team : undefined, agentRetrieve: options["agent-retrieve"] !== "false", allowContext: options["allow-context"] === true, allowSkillCreation: options["allow-skill"] === true, live: options.live === true, selectedEventIds: typeof options.events === "string" ? options.events.split(",") : undefined, expiresAt: typeof options.expires === "string" ? options.expires : undefined, maxViews: typeof options["max-views"] === "string" ? Number(options["max-views"]) : undefined });
+  const spec = { traceId, content: (typeof options.content === "string" ? options.content : "overview") as never, audience: (typeof options.audience === "string" ? options.audience : "anyone_with_link") as never, emails: typeof options.emails === "string" ? options.emails.split(",") : undefined, teamId: typeof options.team === "string" ? options.team : undefined, agentRetrieve: options["agent-retrieve"] !== "false", allowContext: options["allow-context"] === true, allowSkillCreation: options["allow-skill"] === true, live: options.live === true, selectedEventIds: typeof options.events === "string" ? options.events.split(",") : undefined, expiresAt: typeof options.expires === "string" ? options.expires : undefined, maxViews: typeof options["max-views"] === "string" ? Number(options["max-views"]) : undefined };
+  return store.setting("endpoint") && store.setting("cloud.access_token")
+    ? cloudRequest(store, `/v1/traces/${encodeURIComponent(traceId)}/shares`, "POST", spec)
+    : store.createShare(spec);
 }
 
 function summaryCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {

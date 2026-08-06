@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 
 const START = "# >>> agenttraces managed >>>";
@@ -11,11 +13,12 @@ function readJson(path: string) {
 }
 function writeJson(path: string, value: unknown) { ensureParent(path); writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }); }
 
-export interface IntegrationReceipt { host: "claude_code" | "codex" | "cursor"; configPath: string; skillPath: string }
+export interface IntegrationReceipt { host: "claude_code" | "codex" | "cursor" | "background_daemon"; configPath: string; skillPath?: string; active?: boolean }
 
-export function installIntegrations(userHome: string, command = "agenttraces") {
+export function installIntegrations(userHome: string, command = "npx") {
   const receipts: IntegrationReceipt[] = [];
-  const server = { command, args: ["mcp"] };
+  const args = command === "npx" ? ["-y", "agenttraces", "mcp"] : ["mcp"];
+  const server = { command, args };
 
   const claudeConfigPath = `${userHome}/.claude.json`;
   const claudeConfig = readJson(claudeConfigPath);
@@ -28,7 +31,7 @@ export function installIntegrations(userHome: string, command = "agenttraces") {
   const codexConfigPath = `${userHome}/.codex/config.toml`;
   const existing = existsSync(codexConfigPath) ? readFileSync(codexConfigPath, "utf8") : "";
   const cleaned = existing.replace(new RegExp(`${escape(START)}[\\s\\S]*?${escape(END)}\\n?`, "g"), "").trimEnd();
-  const managed = `${START}\n[mcp_servers.agenttraces]\ncommand = ${JSON.stringify(command)}\nargs = [\"mcp\"]\n${END}\n`;
+  const managed = `${START}\n[mcp_servers.agenttraces]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n${END}\n`;
   ensureParent(codexConfigPath); writeFileSync(codexConfigPath, `${cleaned}${cleaned ? "\n\n" : ""}${managed}`, { mode: 0o600 });
   const codexSkill = `${userHome}/.codex/skills/agenttraces/SKILL.md`;
   writeSkill(codexSkill);
@@ -42,7 +45,50 @@ export function installIntegrations(userHome: string, command = "agenttraces") {
   ensureParent(cursorSkill); writeFileSync(cursorSkill, skillBody(), { mode: 0o600 });
   receipts.push({ host: "cursor", configPath: cursorConfigPath, skillPath: cursorSkill });
 
+  receipts.push(installBackgroundDaemon(userHome, command));
+
   return receipts;
+}
+
+function commandPath(command: string) {
+  if (command.includes("/")) return command;
+  for (const directory of (process.env.PATH ?? "").split(":")) {
+    const candidate = `${directory}/${command}`; if (existsSync(candidate)) return candidate;
+  }
+  return command;
+}
+
+function xml(value: string) { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
+
+function installBackgroundDaemon(userHome: string, command: string): IntegrationReceipt {
+  const args = command === "npx" ? ["-y", "agenttraces", "daemon", "run"] : ["daemon", "run"];
+  const executable = commandPath(command);
+  const active = userHome === homedir();
+  if (process.platform === "darwin") {
+    const configPath = `${userHome}/Library/LaunchAgents/com.agenttraces.daemon.plist`;
+    const argumentsXml = [executable, ...args].map((value) => `      <string>${xml(value)}</string>`).join("\n");
+    const path = [dirname(executable), dirname(process.execPath), `${userHome}/.local/bin`, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":");
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key><string>com.agenttraces.daemon</string>\n  <key>ProgramArguments</key>\n  <array>\n${argumentsXml}\n  </array>\n  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(path)}</string></dict>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>10</integer>\n  <key>StandardOutPath</key><string>${xml(`${userHome}/.agenttraces/daemon.stdout.log`)}</string>\n  <key>StandardErrorPath</key><string>${xml(`${userHome}/.agenttraces/daemon.stderr.log`)}</string>\n</dict>\n</plist>\n`;
+    ensureParent(configPath); writeFileSync(configPath, plist, { mode: 0o600 });
+    if (active) {
+      const domain = `gui/${process.getuid?.() ?? 0}`;
+      try { execFileSync("/bin/launchctl", ["bootout", `${domain}/com.agenttraces.daemon`], { stdio: "ignore" }); } catch {}
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try { execFileSync("/bin/launchctl", ["bootstrap", domain, configPath], { stdio: "ignore" }); break; }
+        catch (error) { if (attempt === 4) throw error; execFileSync("/bin/sleep", ["1"]); }
+      }
+      execFileSync("/bin/launchctl", ["kickstart", "-k", `${domain}/com.agenttraces.daemon`], { stdio: "ignore" });
+    }
+    return { host: "background_daemon", configPath, active };
+  }
+  const configPath = `${userHome}/.config/systemd/user/agenttraces.service`;
+  const execStart = [executable, ...args].map((value) => JSON.stringify(value)).join(" ");
+  ensureParent(configPath); writeFileSync(configPath, `[Unit]\nDescription=AgentTraces local capture\n\n[Service]\nType=simple\nExecStart=${execStart}\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n`, { mode: 0o600 });
+  if (active && process.platform === "linux") {
+    execFileSync("systemctl", ["--user", "daemon-reload"], { stdio: "ignore" });
+    execFileSync("systemctl", ["--user", "enable", "--now", "agenttraces.service"], { stdio: "ignore" });
+  }
+  return { host: "background_daemon", configPath, active: active && process.platform === "linux" };
 }
 
 function escape(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -63,6 +109,15 @@ export function removeIntegrations(userHome: string) {
     const content = readFileSync(codex, "utf8");
     const cleaned = content.replace(new RegExp(`${escape(START)}[\\s\\S]*?${escape(END)}\\n?`, "g"), "");
     if (cleaned !== content) { writeFileSync(codex, cleaned, { mode: 0o600 }); changed.push(codex); }
+  }
+  if (process.platform === "darwin") {
+    const plist = `${userHome}/Library/LaunchAgents/com.agenttraces.daemon.plist`;
+    if (userHome === homedir()) { try { execFileSync("/bin/launchctl", ["bootout", `gui/${process.getuid?.() ?? 0}/com.agenttraces.daemon`], { stdio: "ignore" }); } catch {} }
+    if (existsSync(plist)) { unlinkSync(plist); changed.push(plist); }
+  } else {
+    const unit = `${userHome}/.config/systemd/user/agenttraces.service`;
+    if (userHome === homedir() && process.platform === "linux") { try { execFileSync("systemctl", ["--user", "disable", "--now", "agenttraces.service"], { stdio: "ignore" }); } catch {} }
+    if (existsSync(unit)) { unlinkSync(unit); changed.push(unit); }
   }
   return { changed, preservedUserConfiguration: true };
 }

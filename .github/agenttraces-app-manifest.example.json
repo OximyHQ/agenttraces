@@ -1,12 +1,18 @@
 {
   "name": "AgentTraces",
-  "url": "https://YOUR_AGENTTRACES_DOMAIN",
+  "description": "Connect coding-agent traces to the pull requests that produced them.",
+  "url": "https://agenttraces.sh",
   "hook_attributes": {
-    "url": "https://YOUR_API_DOMAIN/v1/github/webhooks",
+    "url": "https://api.agenttraces.sh/v1/github/webhooks",
     "active": true
   },
-  "redirect_url": "https://YOUR_AGENTTRACES_DOMAIN/dashboard/team",
-  "public": false,
+  "redirect_url": "https://agenttraces.sh/dashboard/team",
+  "callback_urls": [
+    "https://agenttraces.sh/api/auth/callback/github"
+  ],
+  "setup_url": "https://agenttraces.sh/dashboard/team",
+  "setup_on_update": true,
+  "public": true,
   "default_permissions": {
     "contents": "read",
     "metadata": "read",

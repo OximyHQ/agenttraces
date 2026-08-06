@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const workerPromise = import(new URL("../dist/server/index.js", import.meta.url).href).then(({ default: worker }) => worker);
+
 async function render(path = "/") {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const worker = await workerPromise;
 
   return worker.fetch(
     new Request(`http://localhost${path}`, {
@@ -60,7 +60,7 @@ test("server-renders docs, dashboard, trace, pull-request, team, join, auth, and
 });
 
 test("keeps the surface small, responsive, accessible, and documented", async () => {
-  const [page, installPanel, tabs, css, layout, packageJson, product, design, schema] = await Promise.all([
+  const [page, installPanel, tabs, css, layout, packageJson, product, design, auth] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/install-panel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/tabs.ts", import.meta.url), "utf8"),
@@ -69,7 +69,7 @@ test("keeps the surface small, responsive, accessible, and documented", async ()
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../../../PRODUCT.md", import.meta.url), "utf8"),
     readFile(new URL("../../../DESIGN.md", import.meta.url), "utf8"),
-    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/auth.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(installPanel, /role="tablist"/);
@@ -89,7 +89,8 @@ test("keeps the surface small, responsive, accessible, and documented", async ()
   assert.match(packageJson, /@fontsource-variable\/inter/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.match(packageJson, /better-auth/);
-  assert.match(schema, /sqliteTable\("session"/);
+  assert.match(auth, /new Pool/);
+  assert.match(auth, /DATABASE_URL/);
   assert.match(product, /<!-- impeccable:product-schema 1 -->/);
   assert.match(product, /The product name is AgentTraces, plural/);
   assert.match(design, /The Quiet Trace Manual/);

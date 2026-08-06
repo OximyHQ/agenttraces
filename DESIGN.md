@@ -36,10 +36,9 @@ page explains the product through working commands, short prose, compact
 evidence views, and thin rules. It does not behave like a campaign site or an
 enterprise dashboard showroom.
 
-This direction takes its visual proportions from the restrained surface of
-givemeanode.com—particularly its narrow centered frame, small Inter type,
-subtle code panels, and generous whitespace—while using only original
-AgentTraces language and product-specific interface examples.
+The visual system uses a narrow centered frame, small Inter type, subtle code
+panels, and generous whitespace. Every page uses original AgentTraces language
+and product-specific interface examples.
 
 ## Typography
 

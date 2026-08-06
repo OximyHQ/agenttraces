@@ -1,85 +1,223 @@
 # AgentTraces
 
-AgentTraces is searchable, permissioned history for coding agents. It captures native sessions from the tools developers already use, connects them to repositories and pull requests, and makes the resulting evidence available through a CLI, an MCP server, a web dashboard, and immutable share links.
+Searchable memory for coding agents.
 
-The current coding agent does the reasoning. AgentTraces retrieves the smallest authorized slice of earlier work and preserves its provenance.
+AgentTraces captures the native sessions already written by Claude Code, Codex,
+Cursor, Conductor, GitHub Copilot, OpenClaw, and Antigravity. It turns them into
+private, permissioned traces that you can search from your terminal, retrieve
+from any MCP-compatible agent, connect to pull requests, or share with a link.
 
-## Start locally
+Your current coding agent does the reasoning. AgentTraces supplies the smallest
+authorized slice of earlier work, with the original source and provenance.
 
-```bash
-npx agenttraces up
-```
+## Start in two minutes
 
-Or give this to a coding agent:
-
-> Install AgentTraces for this machine, run its doctor checks, and tell me exactly what will be captured before enabling it.
-
-Capture starts with an anonymous device identity. Personal traces are private by default, the pending local spool is encrypted, and the device can be claimed later without changing its trace IDs.
-
-Shared trace links use `/t/<readable-title>/<opaque-token>` so the work is recognizable when the link travels. The title slug is presentation only; the revocable token remains the permission capability.
+Requires Node.js 22.13 or newer.
 
 ```bash
-agenttraces doctor --json
-agenttraces search "the queue timeout investigation" --json
-agenttraces show TRACE_ID --view full_transcript --json
+npx agenttraces up --endpoint https://api.agenttraces.sh
 ```
 
-## What is included
+That command:
 
-- Native collectors for Claude Code, Codex, Cursor, OpenClaw, Conductor, Antigravity, and GitHub Copilot.
-- Incremental JSONL, bounded SQLite, text, JSON, and binary artifact readers.
-- Secret scrubbing, AES-256-GCM spool encryption, Ed25519 device identity, signed ingest, and idempotent batches.
-- Permission-first local and PostgreSQL search with bounded snippets and trace provenance.
-- Twelve local MCP tools for search, retrieval, PR history, usage, lazy subscription-powered enrichment, sharing, and reusable skills.
-- Team setup links with email/domain constraints, expiry, usage limits, revocation, registered devices, and owner-defined policy.
-- Many-to-many trace, commit, repository, and pull-request linkage with visible evidence and confidence.
-- Immutable public shares by default, with overview, conversation, highlights, and full-trace views.
-- A Better Auth web sign-in surface, team dashboard, semantic trace viewer, pull-request history, documentation, and public trace pages.
-- PostgreSQL, Redis/BullMQ, and S3-compatible cloud services for normalized storage and durable native batches.
+1. detects supported coding agents on the machine;
+2. creates a local encrypted device identity;
+3. installs non-interactive capture hooks;
+4. begins capturing new sessions; and
+5. registers the device with AgentTraces Cloud.
+
+Nothing is public by default. Existing history is not uploaded unless you add
+`--history all`.
+
+Give an agent this prompt if you prefer:
+
+> Set up AgentTraces for this machine using the production endpoint, run its
+> doctor checks, explain what sources were detected, and verify that the MCP
+> server is available. Do not ask me questions unless setup fails.
+
+## Use it
+
+```bash
+# See capture health and detected sources
+npx agenttraces doctor --json
+
+# Search earlier work
+npx agenttraces search "the queue timeout investigation" --json
+
+# Inspect one trace
+npx agenttraces show TRACE_ID --view full_transcript --json
+
+# Import existing sessions, safely and incrementally
+npx agenttraces daemon backfill --pages 10000 --limit 1000 --json
+
+# Publish an immutable overview and receive a revocable link
+npx agenttraces share create TRACE_ID --content overview --json
+```
+
+AgentTraces also exposes MCP tools for search, retrieval, pull-request history,
+usage, title and summary enrichment, sharing, and reusable skills. Once the CLI
+has been set up, use this server command in Claude Code, Codex, Cursor, or any
+other MCP client:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "agenttraces", "mcp"]
+}
+```
+
+Then an agent can handle requests such as:
+
+- “Find the earlier session where we fixed the queue timeout.”
+- “Show me every trace connected to PR 42.”
+- “Summarize this session using my current model subscription.”
+- “Publish this trace as an immutable overview and give me the link.”
+
+Sharing through MCP uses a preview followed by a single-use confirmation token,
+so an agent can explain exactly what will become accessible before it publishes.
+
+## Teams
+
+An owner creates a team and an enrollment link. The link can be restricted by
+email or domain, limited by uses, expired, and revoked.
+
+```bash
+npx agenttraces login --email owner@example.com --name "Owner"
+npx agenttraces team create acme --visibility private --json
+npx agenttraces team setup-link create TEAM_ID \
+  --domain example.com \
+  --max-uses 50 \
+  --expires 2026-09-01T00:00:00Z \
+  --json
+```
+
+A teammate joins without a separate installer:
+
+```bash
+npx agenttraces up \
+  --endpoint https://api.agenttraces.sh \
+  --team-token SETUP_TOKEN \
+  --email teammate@example.com
+```
+
+Owners and admins can see registered devices, set the team’s default visibility,
+register owned repositories, and inspect the traces and usage connected to pull
+requests. Developers may still pause capture, exclude a repository, or choose a
+stricter personal default.
+
+## How capture works
+
+```text
+native agent artifacts
+        │  read-only, incremental parsers
+        ▼
+encrypted local spool
+        │  redacted + Ed25519 signed batches
+        ▼
+cloud object storage ──► parser worker
+                              │
+                              ▼
+                    PostgreSQL trace index
+                       │       │       │
+                      CLI     MCP     web
+```
+
+- Source files and SQLite databases are never modified.
+- JSONL readers use byte cursors and preserve partial lines.
+- SQLite readers use bounded, source-specific high-water marks.
+- Secrets are scrubbed before an AES-256-GCM encrypted spool is written.
+- Upload cursors advance only after durable cloud acknowledgement.
+- Re-running backfill is idempotent; stable event IDs prevent duplicates.
+- Cloud search applies authorization before returning snippets or trace metadata.
+- Public shares are point-in-time snapshots unless `live` is explicitly selected.
+
+See [architecture](docs/architecture.md), [search design](docs/search-design.md),
+and the [security policy](SECURITY.md) for the full trust model.
+
+## Supported sources
+
+| Source | Native formats | Capture |
+| --- | --- | --- |
+| Claude Code | JSONL | incremental |
+| OpenAI Codex | JSONL | incremental |
+| Cursor | SQLite, JSON, text | bounded |
+| Conductor | SQLite, JSONL | bounded + incremental |
+| GitHub Copilot | JSON, JSONL, SQLite | bounded + incremental |
+| OpenClaw | JSON, JSONL, SQLite | bounded + incremental |
+| Antigravity | JSON, JSONL, SQLite, binary metadata | bounded + incremental |
+
+The parser inventory is executable. Run `pnpm verify:machine` to test it against
+the artifacts present on the current machine without changing those artifacts.
+
+## Web surfaces
+
+- `/` — product website and installation path
+- `/docs` — documentation home
+- `/docs/quickstart` — CLI and MCP setup
+- `/sign-in` — Better Auth email/password and optional GitHub OAuth
+- `/dashboard` — personal trace history and usage
+- `/dashboard/team` — team policy, devices, and enrollment
+- `/dashboard/pull-requests` — PR-to-trace history
+- `/t/<title>/<opaque-token>` — revocable public trace snapshot
+
+The readable title in a public URL is presentation only. The opaque token is the
+permission capability.
 
 ## Repository map
 
+AgentTraces is intentionally one public monorepo:
+
 ```text
-apps/cli       npm command, installation, team, trace, PR, and share workflows
-apps/mcp       newline-delimited stdio MCP transport
-apps/api       cloud HTTP and remote MCP service
-apps/daemon    continuous local capture, retry, and upload loop
+apps/cli       npm command and user workflows
+apps/mcp       stdio MCP entrypoint
+apps/daemon    continuous local capture and retry loop
+apps/api       cloud HTTP API and remote MCP endpoint
 apps/worker    queued native-batch parser
-apps/web       Next/Vinext website, docs, Better Auth, dashboard, and public shares
-packages/core  contracts, parsers, collector, encrypted local store, search, and permissions
-packages/cloud PostgreSQL schema, Redis queue, object storage, cloud authorization, and APIs
-tests          parser, collector, store, CLI, MCP, cloud routing, tenancy, and entrypoint tests
+apps/web       website, docs, auth, dashboard, and public traces
+packages/core  contracts, parsers, collector, local store, search, and permissions
+packages/cloud PostgreSQL, Redis/BullMQ, object storage, tenancy, and cloud APIs
+tests          parser, security, CLI, MCP, cloud, tenancy, and entrypoint tests
 ```
 
-The terminology and invariants are in [CONTEXT.md](CONTEXT.md). Architecture decisions are recorded under [docs/adr](docs/adr), with the broader [architecture](docs/architecture.md), [search design](docs/search-design.md), and [test matrix](docs/test-matrix.md) alongside them. The interface contract is [DESIGN.md](DESIGN.md); [design references](docs/design-references.md) record how givemeanode.com and the supplied traces.com examples informed the work without copying either product.
+Production credentials, DNS ownership, backups, and incident procedures belong
+in the deployment control plane, not in a second copy of the application source.
+A private operations repository is only necessary when private infrastructure or
+commercial services are added; the platform itself remains buildable here.
 
 ## Develop
 
-Requirements: Node.js 22.13 or newer and pnpm 10.
-
 ```bash
-pnpm install
+git clone https://github.com/OximyHQ/agenttraces.git
+cd agenttraces
+corepack enable
+pnpm install --frozen-lockfile
 pnpm verify
 pnpm readiness
 ```
 
-The web app is intentionally a standalone npm workspace:
+Run services locally:
+
+```bash
+pnpm api
+pnpm worker
+pnpm agenttraces doctor --json
+pnpm mcp
+```
+
+Run the web app:
 
 ```bash
 cd apps/web
-npm install
-npm run db:local
-npm test
+npm ci
+DATABASE_URL=postgres://... BETTER_AUTH_SECRET=... npm run dev
 ```
 
-For sign-in, configure `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`; GitHub OAuth additionally needs `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. The dashboard reads `AGENTTRACES_API_URL` and a server-side `AGENTTRACES_API_TOKEN`. Without them, operational pages show clearly labeled preview data.
-
-The cloud API needs PostgreSQL, Redis, and S3-compatible credentials described in [docs/architecture.md](docs/architecture.md). Deployment-specific resource creation and secrets stay outside this repository.
-
-## Security and privacy
-
-Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Share and reusable-skill mutations require explicit confirmation in MCP. External shares are point-in-time snapshots unless `live` is deliberately enabled. Cost is always labeled as exact, estimated, subscription-included, or unavailable; missing price data is never represented as zero.
+Cloud environment variables and service boundaries are documented in
+[docs/architecture.md](docs/architecture.md). The release test matrix is in
+[docs/test-matrix.md](docs/test-matrix.md), and architectural decisions live in
+[docs/adr](docs/adr).
 
 ## Contributing
 
-AgentTraces is licensed under [Apache License 2.0](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+AgentTraces is Apache-2.0 licensed. See [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md).

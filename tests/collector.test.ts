@@ -53,8 +53,10 @@ test("SQLite capture establishes a high-water mark then incrementally reads new 
     const path = `${userHome}/Library/Application Support/Cursor/User/globalStorage/state.vscdb`; mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     const database = new DatabaseSync(path); database.exec("CREATE TABLE cursorDiskKV(key TEXT,value TEXT); CREATE TABLE ItemTable(key TEXT,value TEXT)");
     database.prepare("INSERT INTO cursorDiskKV VALUES (?,?)").run("composerData:old", JSON.stringify({ createdAt: 1, messages: [{ role: "user", text: "old" }] })); database.close();
+    const sparsePath = `${userHome}/Library/Application Support/Cursor/User/workspaceStorage/sparse/state.vscdb`; mkdirSync(sparsePath.slice(0, sparsePath.lastIndexOf("/")), { recursive: true });
+    const sparse = new DatabaseSync(sparsePath); sparse.exec("CREATE TABLE ItemTable(key TEXT,value TEXT)"); sparse.close();
     const store = new AgentTracesStore(`${state}/db.sqlite`, state); const collector = new LocalCollector(store, userHome);
-    assert.equal(collector.scan({ sources: ["cursor"] })[0]?.envelopes.length, 0);
+    const boundary = collector.scan({ sources: ["cursor"] })[0]!; assert.equal(boundary.envelopes.length, 0); assert.deepEqual(boundary.errors, []);
     const update = new DatabaseSync(path); update.prepare("INSERT INTO cursorDiskKV VALUES (?,?)").run("composerData:new", JSON.stringify({ createdAt: 2, messages: [{ role: "user", text: "new" }] })); update.close();
     const result = collector.scan({ sources: ["cursor"], maxEvents: 5 })[0]!;
     assert.ok(result.envelopes.some((item) => item.raw.key === "composerData:new")); assert.ok(result.envelopes.length <= 5);
@@ -75,6 +77,20 @@ test("history pages advance the byte cursor without dropping records beyond the 
       if (!result.receipt?.accepted) break;
     }
     assert.equal(total, 25); assert.equal(store.listTraces()[0]?.eventCount, 25);
+    store.close();
+  } finally { temp.cleanup(); }
+});
+
+test("a session file created after setup is captured from its first record", () => {
+  const temp = temporary();
+  try {
+    const userHome = `${temp.path}/user`; const state = `${temp.path}/state`; mkdirSync(`${userHome}/.claude/projects/project`, { recursive: true });
+    const store = new AgentTracesStore(`${state}/db.sqlite`, state); store.setSetting("capture.started_at", new Date().toISOString());
+    const collector = new LocalCollector(store, userHome);
+    const path = `${userHome}/.claude/projects/project/fresh.jsonl`;
+    write(path, `${JSON.stringify({ type: "user", sessionId: "fresh", message: { role: "user", content: "first prompt" } })}\n`);
+    const result = collector.scan({ sources: ["claude_code"] })[0]!;
+    assert.equal(result.envelopes.length, 1); assert.equal(result.envelopes[0]?.session_id, "fresh");
     store.close();
   } finally { temp.cleanup(); }
 });

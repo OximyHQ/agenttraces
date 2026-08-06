@@ -1,6 +1,6 @@
 {
   "name": "agenttraces",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Capture and search coding-agent traces from the CLI and MCP",
   "type": "module",
   "bin": {

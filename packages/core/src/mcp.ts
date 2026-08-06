@@ -79,7 +79,7 @@ export interface JsonRpcRequest { jsonrpc: "2.0"; id?: string | number; method: 
 export function handleMcpMessage(server: AgentTracesMcp, request: JsonRpcRequest) {
   try {
     let result: unknown;
-    if (request.method === "initialize") result = { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "agenttraces", version: "0.1.0" } };
+    if (request.method === "initialize") result = { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "agenttraces", version: "0.2.0" } };
     else if (request.method === "notifications/initialized") return null;
     else if (request.method === "tools/list") result = { tools: server.listTools() };
     else if (request.method === "tools/call") {

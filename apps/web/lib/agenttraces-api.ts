@@ -1,11 +1,7 @@
 import { demoTraces, type TraceEvent, type TraceRecord } from "./product-data";
 
 async function bindings() {
-  const fallback = process.env as Record<string, string | undefined>;
-  try {
-    const cloudflareRuntime = await import("cloudflare:workers");
-    return { ...fallback, ...(cloudflareRuntime.env as unknown as Record<string, string | undefined>) };
-  } catch { return fallback; }
+  return process.env as Record<string, string | undefined>;
 }
 
 async function cloudCredentials() {

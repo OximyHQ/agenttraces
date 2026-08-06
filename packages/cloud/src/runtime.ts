@@ -39,6 +39,7 @@ export class CloudRuntime {
   async migrate() { await this.pool.query(CLOUD_SCHEMA); }
   async health() { const result = await this.pool.query("SELECT 1 AS ok"); return result.rows[0]?.ok === 1; }
   async close() { await this.queue.close(); this.s3.destroy(); await this.pool.end(); }
+  private publicUrl(path: string) { return this.config.publicWebUrl ? `${this.config.publicWebUrl.replace(/\/$/, "")}${path}` : path; }
 
   async registerDevice(input: { deviceId: string; publicKey: string; name?: string }) {
     if (!/^dev_[A-Za-z0-9_-]+$/.test(input.deviceId) || !input.publicKey.includes("BEGIN PUBLIC KEY")) throw new Error("Invalid device registration");
@@ -167,7 +168,7 @@ export class CloudRuntime {
     const expiresAt = options.expiresAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString();
     await this.pool.query(`INSERT INTO setup_links(id,token_hash,namespace_id,created_by,email,domain,max_uses,expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id, hash(rawToken), teamId, actor.principalId, options.email?.toLowerCase() ?? null, options.domain?.toLowerCase() ?? null, maxUses, expiresAt]);
-    return { id, token: rawToken, url: `/join/${rawToken}`, teamId, maxUses, expiresAt };
+    return { id, token: rawToken, url: this.publicUrl(`/join/${rawToken}`), teamId, maxUses, expiresAt };
   }
 
   async listSetupLinks(token: string, teamId: string) {
@@ -476,7 +477,7 @@ export class CloudRuntime {
       if (!live) await client.query("INSERT INTO share_snapshots(share_id,view,payload,source_updated_at) VALUES($1,$2,$3,$4)", [id, view, JSON.stringify(await this.sharePayload(spec.traceId, view, spec.selectedEventIds)), trace.rows[0].updated_at]);
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-    return { id, token: rawToken, url: sharePath(String(trace.rows[0].share_title), rawToken), snapshot: !live, ...spec, live };
+    return { id, token: rawToken, url: this.publicUrl(sharePath(String(trace.rows[0].share_title), rawToken)), snapshot: !live, ...spec, live };
   }
 
   async getShare(pathSegment: string, viewerKey?: string) {
@@ -501,6 +502,54 @@ export class CloudRuntime {
     const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
     const result = await this.pool.query("UPDATE shares SET revoked_at=now() WHERE id=$1 AND owner_id=$2 AND revoked_at IS NULL RETURNING id", [shareId, actor.principalId]);
     if (!result.rowCount) throw new Error("Share not found or already revoked"); return { id: shareId, revoked: true };
+  }
+
+  async prepareMutation(token: string, action: "share.create" | "skill.create", payload: unknown, ttlSeconds = 300) {
+    const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
+    const confirmationToken = randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    await this.pool.query("INSERT INTO mutation_confirmations(token_hash,principal_id,action,payload,expires_at) VALUES($1,$2,$3,$4,$5)", [hash(confirmationToken), actor.principalId, action, JSON.stringify(payload), expiresAt]);
+    return { status: "confirmation_required", confirmationToken, action, preview: payload, expiresAt, consequences: action === "share.create" ? "Creates a revocable permission capability for the exact audience and content shown." : "Creates a reusable skill containing the exact instructions and trace provenance shown." };
+  }
+
+  async consumeMutation<T>(token: string, confirmationToken: string, action: "share.create" | "skill.create") {
+    const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query("SELECT * FROM mutation_confirmations WHERE token_hash=$1 AND principal_id=$2 AND action=$3 FOR UPDATE", [hash(confirmationToken), actor.principalId, action]);
+      const confirmation = result.rows[0];
+      if (!confirmation || confirmation.consumed_at || new Date(confirmation.expires_at).getTime() <= Date.now()) throw new Error("Confirmation token is invalid, expired, or already used");
+      await client.query("UPDATE mutation_confirmations SET consumed_at=now() WHERE token_hash=$1", [hash(confirmationToken)]);
+      await client.query("COMMIT");
+      return confirmation.payload as T;
+    } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  }
+
+  async createSkill(token: string, input: { name: string; description?: string; instructions: string[]; validation?: string[]; traceIds: string[]; visibility?: string }) {
+    const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
+    if (!input.name?.trim() || !Array.isArray(input.instructions) || !Array.isArray(input.traceIds) || !input.traceIds.length) throw new Error("Invalid skill");
+    for (const traceId of input.traceIds) await this.getTrace(token, traceId, "summary");
+    const id = opaque("skill"); const visibility = input.visibility ?? "private";
+    if (!["private","team","direct_link","public"].includes(visibility)) throw new Error("Invalid visibility");
+    await this.pool.query(`INSERT INTO reusable_skills(id,namespace_id,owner_id,name,description,instructions,validation,trace_ids,visibility)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, actor.namespaceId, actor.principalId, input.name.trim(), input.description ?? "", JSON.stringify(input.instructions), JSON.stringify(input.validation ?? []), JSON.stringify(input.traceIds), visibility]);
+    return this.getSkill(token, id);
+  }
+
+  async listSkills(token: string, query = "") {
+    const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
+    const result = await this.pool.query(`SELECT s.* FROM reusable_skills s WHERE s.archived_at IS NULL AND (s.name ILIKE $2 OR s.description ILIKE $2)
+      AND (s.owner_id=$1 OR s.visibility='public' OR (s.visibility='team' AND EXISTS (SELECT 1 FROM memberships m WHERE m.principal_id=$1 AND m.namespace_id=s.namespace_id)))
+      ORDER BY s.created_at DESC LIMIT 100`, [actor.principalId, `%${query.slice(0,200)}%`]);
+    return { skills: result.rows };
+  }
+
+  async getSkill(token: string, skillId: string) {
+    const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
+    const result = await this.pool.query(`SELECT s.* FROM reusable_skills s WHERE s.id=$2 AND s.archived_at IS NULL
+      AND (s.owner_id=$1 OR s.visibility='public' OR (s.visibility='team' AND EXISTS (SELECT 1 FROM memberships m WHERE m.principal_id=$1 AND m.namespace_id=s.namespace_id)))`, [actor.principalId, skillId]);
+    if (!result.rowCount) throw new Error("Skill not found or inaccessible"); return result.rows[0];
   }
 
   createWorker() { return new Worker("agenttraces-ingest", async (job: Job<{ batchId: string }>) => this.processBatch(job.data.batchId), { connection: redisConnection(this.config.redisUrl), concurrency: Number(process.env.WORKER_CONCURRENCY ?? 4) }); }

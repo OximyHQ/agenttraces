@@ -1,4 +1,4 @@
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 async function handler(request: Request) {
   const { getAuth } = await import("@/lib/auth");

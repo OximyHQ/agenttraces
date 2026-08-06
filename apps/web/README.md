@@ -1,19 +1,24 @@
 # AgentTraces web
 
-The public website, system atlas, and dashboard prototype for AgentTraces.
+The public website, documentation, Better Auth sign-in, authenticated dashboard,
+team and pull-request views, and public trace renderer.
 
 ## Run locally
 
-Requires Node.js `>=22.13.0`.
+Requires Node.js 22.13+, PostgreSQL, and the AgentTraces API.
 
 ```bash
-npm install
+npm ci
+export DATABASE_URL=postgres://...
+export BETTER_AUTH_SECRET="$(openssl rand -base64 32)"
+export BETTER_AUTH_URL=http://localhost:3001
+export AGENTTRACES_API_URL=http://localhost:4318
+npm run auth:migrate
 npm run dev
 ```
 
-Open `http://localhost:3001`. The prototype is a single interactive page that
-documents the product architecture, complete route inventory, dashboard model,
-repository layout, and delivery sequence.
+GitHub OAuth is optional and requires `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET`. Email/password sign-up works without it.
 
 ## Verify
 
@@ -22,15 +27,7 @@ npm test
 npm run lint
 ```
 
-`npm test` creates a production build and checks the rendered HTML for the core
-AgentTraces surfaces and responsive design contract.
-
-## Current boundary
-
-This directory is the proposed `apps/web` package in the AgentTraces monorepo.
-It contains no production backend, authentication, or persistence yet. Those
-runtime boundaries are specified in the repository map inside the atlas and in
-[`../../docs/action-plan.md`](../../docs/action-plan.md).
-
-The generated Vinext shell retains optional Cloudflare/D1 helpers for a future
-deployment decision; the current prototype does not depend on them.
+The production container runs idempotent Better Auth migrations before starting
+the web server. Dashboard requests exchange the Better Auth identity for a
+short-lived cloud identity on the server; cloud credentials never reach browser
+JavaScript.

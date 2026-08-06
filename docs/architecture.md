@@ -47,8 +47,8 @@ Installation generates an anonymous principal, personal namespace, device record
 
 ## Web identity
 
-The web app uses Better Auth with a Cloudflare D1 adapter, GitHub OAuth when configured, and email/password as a baseline. CLI devices continue to use independent signed device identities and scoped access tokens. A production deployment must map the authenticated web user to its cloud principal at the BFF boundary; dashboard API tokens are server-only and never exposed to the browser.
+The web app uses Better Auth with PostgreSQL, GitHub OAuth when configured, and email/password as a baseline. CLI devices continue to use independent signed device identities and scoped access tokens. The authenticated web user is mapped to its cloud principal at the BFF boundary; service credentials are server-only and never exposed to the browser.
 
 ## Deployment inputs
 
-Deploy the API and worker independently. PostgreSQL owns normalized identity/trace/access data, object storage owns compressed native artifacts, and Redis/BullMQ owns parser jobs. The web app needs its D1 auth database plus Better Auth and optional GitHub OAuth secrets. Provider, region, domain, backups, retention jobs, callback URLs, and the GitHub App installation remain explicit operator inputs.
+Deploy the API, worker, and web independently. PostgreSQL owns normalized identity, auth, trace, and access data; object storage owns compressed native artifacts; and Redis/BullMQ owns parser jobs. The web app needs `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `AGENTTRACES_API_URL`, and the same `AGENTTRACES_WEB_AUTH_SECRET` configured on the API. GitHub OAuth additionally needs `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Provider, region, domain, backups, retention jobs, callback URLs, and the GitHub App installation remain explicit operator inputs.
