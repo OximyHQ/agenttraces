@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
+    { "path": "packages/cloud" },
     { "path": "apps/cli" },
     { "path": "apps/mcp" },
     { "path": "apps/api" },

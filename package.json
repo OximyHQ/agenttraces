@@ -8,8 +8,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -b packages/core apps/cli apps/mcp apps/api apps/daemon apps/worker",
-    "typecheck": "tsc -b packages/core apps/cli apps/mcp apps/api apps/daemon apps/worker --pretty false",
+    "build": "tsc -b packages/core packages/cloud apps/mcp apps/api apps/daemon apps/worker && pnpm --filter agenttraces build",
+    "typecheck": "tsc -b packages/core packages/cloud apps/cli apps/mcp apps/api apps/daemon apps/worker --pretty false",
     "test": "tsx --test tests/**/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage tests/**/*.test.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm verify:machine",

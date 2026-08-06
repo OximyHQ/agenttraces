@@ -204,6 +204,10 @@ export class AgentTracesStore {
   enqueue(batchId: string, envelopes: NativeEnvelope[], expectedDeviceId = this.installation().deviceId): IngestReceipt {
     const device = this.device(expectedDeviceId);
     if (!device) throw new Error("Unknown device");
+    const incomingBytes = Buffer.byteLength(json(envelopes));
+    const quotaBytes = Number(this.setting("spool.max_bytes") ?? 512 * 1024 * 1024);
+    const used = this.db.prepare("SELECT COALESCE(SUM(length(cipher)+length(nonce)+length(tag)),0) AS bytes FROM spool WHERE state!='processed'").get() as Row;
+    if (Number(used.bytes) + incomingBytes > quotaBytes) throw new Error(`Local spool quota exceeded (${quotaBytes} bytes); upload or raise spool.max_bytes explicitly`);
     let accepted = 0; let duplicates = 0;
     this.db.exec("BEGIN");
     try {
@@ -243,6 +247,7 @@ export class AgentTracesStore {
         failed++;
       }
     }
+    this.db.prepare("DELETE FROM spool WHERE state='processed' AND processed_at < datetime('now','-7 days')").run();
     return { processed, failed, produced, remaining: Number((this.db.prepare("SELECT COUNT(*) AS count FROM spool WHERE state != 'processed'").get() as Row).count) };
   }
 

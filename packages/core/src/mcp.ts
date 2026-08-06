@@ -1,4 +1,5 @@
 import type { AgentTracesStore } from "./store.js";
+import { createInterface } from "node:readline";
 
 type Tool = { name: string; description: string; inputSchema: Record<string, unknown> };
 type Input = Record<string, unknown>;
@@ -78,4 +79,36 @@ export function handleMcpMessage(server: AgentTracesMcp, request: JsonRpcRequest
   } catch (error) {
     return request.id === undefined ? null : { jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } };
   }
+}
+
+export function runMcpStdio(store: AgentTracesStore): Promise<void> {
+  const server = new AgentTracesMcp(store);
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  return new Promise((resolve) => {
+    lines.on("line", (line) => {
+      try {
+        const response = handleMcpMessage(server, JSON.parse(line) as JsonRpcRequest);
+        if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
+      } catch (error) {
+        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: error instanceof Error ? error.message : String(error) } })}\n`);
+      }
+    });
+    lines.once("close", resolve);
+  });
+}
+
+export function runRemoteMcpStdio(endpoint: string, accessToken: string): Promise<void> {
+  const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  return new Promise((resolve) => {
+    lines.on("line", async (line) => {
+      try {
+        const response = await fetch(`${endpoint.replace(/\/$/, "")}/mcp`, { method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" }, body: line });
+        const output = await response.text();
+        process.stdout.write(`${response.ok ? output : JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message: output } })}\n`);
+      } catch (error) {
+        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } })}\n`);
+      }
+    });
+    lines.once("close", resolve);
+  });
 }

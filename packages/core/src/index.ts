@@ -9,5 +9,6 @@ export * from "./mcp.js";
 export * from "./paths.js";
 export * from "./redaction.js";
 export * from "./parsers/index.js";
+export { stableId } from "./parsers/base.js";
 export * from "./sources.js";
 export * from "./store.js";

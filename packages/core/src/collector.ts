@@ -19,6 +19,7 @@ export interface ScanOptions {
   dryRun?: boolean;
   gitCwd?: string;
   gitSnapshot?: NativeEnvelope["git"];
+  changedPaths?: string[];
 }
 
 export interface SourceScanResult {
@@ -128,6 +129,8 @@ export class LocalCollector {
     const inspected = options.gitSnapshot ? null : inspectGit(options.gitCwd ?? process.cwd());
     const gitSnapshot = options.gitSnapshot ?? (inspected ? { ...inspected, repository: canonicalRepository(inspected.remote) } : undefined);
     const enriched = { ...options, gitSnapshot };
+    const excluded = JSON.parse(this.store.setting("privacy.exclusions") ?? "[]") as string[];
+    if (gitSnapshot?.repository && excluded.includes(gitSnapshot.repository)) return [];
     const selected = SOURCE_DEFINITIONS.filter((source) => !options.sources || options.sources.includes(source.name));
     return selected.map((source) => this.scanSource(source, enriched));
   }
@@ -147,14 +150,18 @@ export class LocalCollector {
     for (const glob of source.globs) {
       const pattern = resolveSourcePath(glob.pattern, this.userHome);
       const skips = (glob.skipPatterns ?? []).map(globRegex);
-      for (const path of matchFiles(pattern).sort()) {
+      const candidates = options.changedPaths
+        ? options.changedPaths.filter((path) => globRegex(pattern).test(path) && existsSync(path))
+        : matchFiles(pattern);
+      for (const path of candidates.sort()) {
         if (result.envelopes.length >= maxEvents) break;
         if (skips.some((matcher) => matcher.test(basename(path)))) { result.skipped++; continue; }
         try {
           safePath(path, this.userHome); result.files++;
+          const bounded = { ...options, maxEvents: maxEvents - result.envelopes.length };
           const envelopes = glob.readMode === "full"
-            ? this.readFull(source.name, path, glob.fileType, glob.contentType ?? "json", options)
-            : this.readIncremental(source.name, path, glob.fileType, options);
+            ? this.readFull(source.name, path, glob.fileType, glob.contentType ?? "json", bounded)
+            : this.readIncremental(source.name, path, glob.fileType, bounded);
           result.envelopes.push(...envelopes.slice(0, maxEvents - result.envelopes.length));
         } catch (error) { result.errors.push(`${normalizeSourceFile(path, this.userHome)}: ${error instanceof Error ? error.message : String(error)}`); }
       }
@@ -190,11 +197,12 @@ export class LocalCollector {
     const lines = raw.split("\n");
     lines.pop();
     let consumed = 0; const envelopes: NativeEnvelope[] = [];
-    for (const [index, line] of lines.entries()) {
+    for (const line of lines) {
       consumed += Buffer.byteLength(line) + 1;
       if (!line.trim()) continue;
-      const envelope = this.lineEnvelope(source, path, fileType, line, index + 1, options);
+      const envelope = this.lineEnvelope(source, path, fileType, line, offset + consumed, options);
       if (envelope) envelopes.push(envelope);
+      if (envelopes.length >= (options.maxEvents ?? 10_000)) break;
     }
     if (!options.dryRun) this.store.setCursor(source, key, String(offset + consumed));
     return envelopes;

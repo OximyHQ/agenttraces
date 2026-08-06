@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
-  "references": [{ "path": "../../packages/core" }],
+  "references": [{ "path": "../../packages/cloud" }],
   "compilerOptions": { "composite": true, "outDir": "dist", "rootDir": "src" },
   "include": ["src/**/*.ts"]
 }
