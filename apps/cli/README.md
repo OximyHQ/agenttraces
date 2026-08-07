@@ -69,6 +69,6 @@ Enrollment links can be restricted by email or domain, limited by uses,
 expired, and revoked. Owners can register team repositories, inspect devices,
 and connect coding sessions to pull requests.
 
-The source, security model, self-hosting architecture, and full documentation
-are at [github.com/OximyHQ/agenttraces](https://github.com/OximyHQ/agenttraces).
-The hosted product is at [agenttraces.sh](https://agenttraces.sh).
+Read the product documentation at [agenttraces.sh/docs](https://agenttraces.sh/docs).
+The source, security model, and self-hosting architecture are available at
+[github.com/OximyHQ/agenttraces](https://github.com/OximyHQ/agenttraces).
