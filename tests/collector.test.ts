@@ -50,10 +50,10 @@ test("SQLite capture establishes a high-water mark then incrementally reads new 
   const temp = temporary();
   try {
     const userHome = `${temp.path}/user`; const state = `${temp.path}/state`;
-    const path = `${userHome}/Library/Application Support/Cursor/User/globalStorage/state.vscdb`; mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    const path = resolveSourcePath("{appdata}/Cursor/User/globalStorage/state.vscdb", userHome); mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     const database = new DatabaseSync(path); database.exec("CREATE TABLE cursorDiskKV(key TEXT,value TEXT); CREATE TABLE ItemTable(key TEXT,value TEXT)");
     database.prepare("INSERT INTO cursorDiskKV VALUES (?,?)").run("composerData:old", JSON.stringify({ createdAt: 1, messages: [{ role: "user", text: "old" }] })); database.close();
-    const sparsePath = `${userHome}/Library/Application Support/Cursor/User/workspaceStorage/sparse/state.vscdb`; mkdirSync(sparsePath.slice(0, sparsePath.lastIndexOf("/")), { recursive: true });
+    const sparsePath = resolveSourcePath("{appdata}/Cursor/User/workspaceStorage/sparse/state.vscdb", userHome); mkdirSync(sparsePath.slice(0, sparsePath.lastIndexOf("/")), { recursive: true });
     const sparse = new DatabaseSync(sparsePath); sparse.exec("CREATE TABLE ItemTable(key TEXT,value TEXT)"); sparse.close();
     const store = new AgentTracesStore(`${state}/db.sqlite`, state); const collector = new LocalCollector(store, userHome);
     const boundary = collector.scan({ sources: ["cursor"] })[0]!; assert.equal(boundary.envelopes.length, 0); assert.deepEqual(boundary.errors, []);
