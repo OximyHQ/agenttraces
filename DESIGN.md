@@ -36,10 +36,9 @@ page explains the product through working commands, short prose, compact
 evidence views, and thin rules. It does not behave like a campaign site or an
 enterprise dashboard showroom.
 
-This direction takes its visual proportions from the restrained surface of
-givemeanode.com—particularly its narrow centered frame, small Inter type,
-subtle code panels, and generous whitespace—while using only original
-AgentTraces language and product-specific interface examples.
+The visual system uses a narrow centered frame, small Inter type, subtle code
+panels, and generous whitespace. Every page uses original AgentTraces language
+and product-specific interface examples.
 
 ## Typography
 
@@ -80,6 +79,18 @@ against their rendered background.
 - Tables use row rules and alignment before container chrome.
 - Trace previews must be labeled when they use synthetic data.
 - Focus is a visible two-pixel blue outline. Tab lists must support arrow keys.
+
+## Provider identity and public links
+
+Use the native provider mark beside a written source name wherever it materially
+helps people scan mixed-agent work: trace lists, trace headers, source coverage,
+and pull-request trace rows. Provider icons are never the only accessible label,
+and unknown or aggregator sources use the neutral terminal-source mark. Keep the
+marks small and unframed so they behave like metadata, not decorative badges.
+
+Public trace routes use `/t/<readable-trace-title>/<opaque-token>`. The slug is
+for recognition, link previews, and AgentTraces brand context; the opaque token
+is the permission capability and remains authoritative.
 
 ## Product constraints
 

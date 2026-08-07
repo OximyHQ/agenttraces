@@ -12,7 +12,28 @@ export type SourceName = (typeof SOURCE_NAMES)[number];
 export type ReadMode = "incremental" | "full" | "fold";
 export type ContentType = "json" | "text" | "binary";
 export type Visibility = "private" | "team" | "direct_link" | "public";
-export type CostAccuracy = "exact" | "estimated" | "subscription_allocated" | "unavailable";
+export type CostAccuracy = "exact" | "estimated" | "subscription_included" | "unavailable";
+export type MembershipRole = "member" | "admin" | "owner";
+export type OperationStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+export type OperationKind =
+  | "file_read"
+  | "file_write"
+  | "file_edit"
+  | "repository_search"
+  | "command_run"
+  | "test_run"
+  | "web_search"
+  | "web_fetch"
+  | "mcp_call"
+  | "agent_spawn"
+  | "agent_message"
+  | "agent_complete"
+  | "git_status"
+  | "git_commit"
+  | "git_push"
+  | "generic_tool";
+export type ShareView = "overview" | "conversation" | "highlights" | "full_trace";
+export type LinkEvidence = "exact_commit" | "branch_repository" | "explicit_marker" | "time_file_overlap" | "manual";
 
 export interface NativeEnvelope {
   schema_version: 1;
@@ -60,6 +81,14 @@ export interface NormalizedEvent {
   content?: string;
   toolName?: string;
   toolCallId?: string;
+  operationKind?: OperationKind;
+  operationStatus?: OperationStatus;
+  purpose?: string;
+  parentEventId?: string;
+  childTraceId?: string;
+  durationMs?: number;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
   command?: string;
   model?: string;
   repository?: string;
@@ -89,6 +118,7 @@ export interface TraceSummary {
   repository?: string;
   branch?: string;
   pullRequest?: number;
+  pullRequests?: PullRequestRef[];
   visibility: Visibility;
   startedAt: string;
   updatedAt: string;
@@ -102,8 +132,41 @@ export interface TraceSummary {
 export interface Actor {
   principalId: string;
   teamIds: string[];
-  role?: "member" | "admin" | "owner";
+  role?: MembershipRole;
+  teamRoles?: Record<string, MembershipRole>;
   shareToken?: string;
+}
+
+export interface PullRequestRef {
+  id: string;
+  repository: string;
+  number: number;
+  title?: string;
+  state?: string;
+  url?: string;
+  evidence?: LinkEvidence;
+  confidence?: number;
+  confirmed?: boolean;
+}
+
+export interface TraceEnrichment {
+  traceId: string;
+  title: string;
+  summary: string;
+  stages: Array<{ kind: "understand" | "build" | "edit" | "verify" | "cleanup" | "outcome"; text: string }>;
+  outcome: "completed" | "partial" | "abandoned" | "failed" | "unknown";
+  provider: "deterministic" | "local_subscription" | "team_byok" | "managed_cloud";
+  model?: string;
+  promptVersion: string;
+  generatedAt: string;
+}
+
+export interface SetupLinkSpec {
+  teamId: string;
+  email?: string;
+  domain?: string;
+  maxUses?: number;
+  expiresAt?: string;
 }
 
 export interface SourceGlob {
@@ -157,7 +220,7 @@ export interface SearchRequest {
 
 export interface ShareSpec {
   traceId: string;
-  content: "metadata" | "summary" | "selected_messages" | "full_transcript" | "skill";
+  content: ShareView | "metadata" | "summary" | "selected_messages" | "full_transcript" | "skill";
   audience: "private" | "specific_people" | "team" | "anyone_with_link" | "public";
   emails?: string[];
   teamId?: string;
@@ -166,6 +229,8 @@ export interface ShareSpec {
   allowSkillCreation: boolean;
   expiresAt?: string;
   maxViews?: number;
+  live?: boolean;
+  selectedEventIds?: string[];
 }
 
 export function isSourceName(value: string): value is SourceName {

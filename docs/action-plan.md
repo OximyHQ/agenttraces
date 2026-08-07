@@ -1,6 +1,11 @@
 # AgentTraces action plan
 
-Status: working plan
+Status: implemented baseline; retained as the original planning record
+
+The current contracts and shipped-vs-operator boundary are authoritative in
+`CONTEXT.md`, `docs/architecture.md`, the ADRs, and `pnpm readiness`. Later
+decisions added email/password as a baseline beside GitHub OAuth, immutable
+external shares, all seven current local parsers, and the Better Auth web BFF.
 
 ## 1. Product direction
 
@@ -512,7 +517,7 @@ Decided:
 1. Team enrollment uploads to the organization cloud. The organization owner/admin defines the default visibility; traces are not unconditionally team-visible.
 2. New sessions upload automatically. Historical sessions are discovered and offered as an explicit import choice.
 3. The organization retains organization traces after a member leaves. The former member does not automatically receive a personal transcript copy.
-4. GitHub is the only V1 login and claim provider.
+4. Better Auth provides email/password as the baseline and GitHub OAuth when configured; device claim credentials remain separate.
 5. Ship macOS first and Linux immediately after. Windows must remain architecturally possible but does not block beta.
 6. Implement Claude Code and Codex in the tracer bullet, followed by Cursor during continuous-capture work.
 7. Unclaimed personal traces expire after 30 days and are subject to an abuse-prevention storage ceiling.

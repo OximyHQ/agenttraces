@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a focused addition to capture, retrieval, teams, sharing, or the web.
+title: "feature: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What earlier work is difficult to capture, find, understand, or share today?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Desired workflow
+      description: Describe the user, command or surface, and the successful outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and permission considerations
+      description: Note any new data, audience, retention, or mutation boundary.
+    validations:
+      required: true

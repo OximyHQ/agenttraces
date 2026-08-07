@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-05T00:00:00.000Z",
+  "generatedAt": "2026-08-06T21:40:00.000Z",
   "title": "Design System: AgentTraces",
   "extensions": {
     "colorMeta": {
@@ -60,7 +60,9 @@
       "rules": [
         "Keep the page in an 848px frame and prose within 576px.",
         "Keep body copy at 14px and the primary heading at 18px.",
-        "Use real commands and compact evidence views as the visual material."
+        "Use real commands and compact evidence views as the visual material.",
+        "Pair native provider marks with written source labels where they improve scanning.",
+        "Use readable trace-title slugs in public links while keeping the opaque token authoritative."
       ],
       "dos": [
         "Label every synthetic trace preview.",

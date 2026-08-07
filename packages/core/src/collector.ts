@@ -163,7 +163,11 @@ export class LocalCollector {
             ? this.readFull(source.name, path, glob.fileType, glob.contentType ?? "json", bounded)
             : this.readIncremental(source.name, path, glob.fileType, bounded);
           result.envelopes.push(...envelopes.slice(0, maxEvents - result.envelopes.length));
-        } catch (error) { result.errors.push(`${normalizeSourceFile(path, this.userHome)}: ${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/database is locked/i.test(message)) { result.skipped++; continue; }
+          result.errors.push(`${normalizeSourceFile(path, this.userHome)}: ${message}`);
+        }
       }
     }
     for (const sqlite of source.sqlite) {
@@ -174,17 +178,24 @@ export class LocalCollector {
         try {
           safePath(path, this.userHome); result.databases++;
           result.envelopes.push(...this.readSqlite(source.name, path, sqlite.queries, options).slice(0, maxEvents - result.envelopes.length));
-        } catch (error) { result.errors.push(`${normalizeSourceFile(path, this.userHome)}: ${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/database is locked/i.test(message)) { result.skipped++; continue; }
+          result.errors.push(`${normalizeSourceFile(path, this.userHome)}: ${message}`);
+        }
       }
     }
     return result;
   }
 
   private readIncremental(source: SourceName, path: string, fileType: string, options: ScanOptions) {
-    const size = statSync(path).size;
+    const statistics = statSync(path); const size = statistics.size;
     const key = normalizeSourceFile(path, this.userHome);
     const savedCursor = this.store.cursor(source, key);
-    const stored = options.fromBeginning ? 0 : Number(savedCursor ?? size);
+    const captureStartedAt = Date.parse(this.store.setting("capture.started_at") ?? "");
+    const createdAt = statistics.birthtimeMs > 0 ? statistics.birthtimeMs : statistics.ctimeMs;
+    const createdAfterSetup = Number.isFinite(captureStartedAt) && createdAt >= captureStartedAt - 1000;
+    const stored = options.fromBeginning || (savedCursor === undefined && createdAfterSetup) ? 0 : Number(savedCursor ?? size);
     const offset = size < stored ? 0 : stored;
     if (offset === size) {
       if (!options.dryRun && savedCursor === undefined) this.store.setCursor(source, key, String(size));
@@ -227,34 +238,39 @@ export class LocalCollector {
     try {
       for (const query of queries) {
         if (envelopes.length >= (options.maxEvents ?? 10_000)) break;
-        const key = `${normalizeSourceFile(path, this.userHome)}#${query.fileType}`;
-        const cursor = this.store.cursor(source, key);
-        const baseSql = query.sql.trim().replace(/;$/, "");
-        if (!options.fromBeginning && cursor === undefined && query.incrementalField) {
-          const maximumRow = database.prepare(`SELECT MAX("${query.incrementalField}") AS maximum FROM (${baseSql}) AS source_rows`).get() as Record<string, unknown> | undefined;
-          if (!options.dryRun && maximumRow?.maximum !== null && maximumRow?.maximum !== undefined) this.store.setCursor(source, key, String(maximumRow.maximum));
-          continue;
+        try {
+          const key = `${normalizeSourceFile(path, this.userHome)}#${query.fileType}`;
+          const cursor = this.store.cursor(source, key);
+          const baseSql = query.sql.trim().replace(/;$/, "");
+          if (!options.fromBeginning && cursor === undefined && query.incrementalField) {
+            const maximumRow = database.prepare(`SELECT MAX("${query.incrementalField}") AS maximum FROM (${baseSql}) AS source_rows`).get() as Record<string, unknown> | undefined;
+            if (!options.dryRun && maximumRow?.maximum !== null && maximumRow?.maximum !== undefined) this.store.setCursor(source, key, String(maximumRow.maximum));
+            continue;
+          }
+          const remaining = Math.max(1, (options.maxEvents ?? 10_000) - envelopes.length);
+          const boundedSql = cursor !== undefined && !options.fromBeginning && query.incrementalField
+            ? `SELECT * FROM (${baseSql}) AS source_rows WHERE "${query.incrementalField}" > ? LIMIT ?`
+            : `SELECT * FROM (${baseSql}) AS source_rows LIMIT ?`;
+          const cursorValue = cursor !== undefined && /^-?\d+(?:\.\d+)?$/.test(cursor) ? Number(cursor) : cursor;
+          const rows = (cursor !== undefined && !options.fromBeginning && query.incrementalField
+            ? database.prepare(boundedSql).all(cursorValue!, remaining)
+            : database.prepare(boundedSql).all(remaining)) as Record<string, unknown>[];
+          let maximum = cursor;
+          for (const rowValue of rows) {
+            const row = plainRow(rowValue);
+            const incremental = query.incrementalField ? text(row[query.incrementalField]) : undefined;
+            if (!options.fromBeginning && cursor !== undefined && incremental !== undefined && incremental <= cursor) continue;
+            const serialized = JSON.stringify(row);
+            const envelope = this.lineEnvelope(source, path, query.fileType, serialized, envelopes.length + 1, options);
+            if (envelope) envelopes.push(envelope);
+            if (incremental !== undefined && (maximum === undefined || incremental > maximum)) maximum = incremental;
+            if (envelopes.length >= (options.maxEvents ?? 10_000)) break;
+          }
+          if (!options.dryRun && maximum !== undefined) this.store.setCursor(source, key, maximum);
+        } catch (error) {
+          if (/no such table:/i.test(error instanceof Error ? error.message : String(error))) continue;
+          throw error;
         }
-        const remaining = Math.max(1, (options.maxEvents ?? 10_000) - envelopes.length);
-        const boundedSql = cursor !== undefined && !options.fromBeginning && query.incrementalField
-          ? `SELECT * FROM (${baseSql}) AS source_rows WHERE "${query.incrementalField}" > ? LIMIT ?`
-          : `SELECT * FROM (${baseSql}) AS source_rows LIMIT ?`;
-        const cursorValue = cursor !== undefined && /^-?\d+(?:\.\d+)?$/.test(cursor) ? Number(cursor) : cursor;
-        const rows = (cursor !== undefined && !options.fromBeginning && query.incrementalField
-          ? database.prepare(boundedSql).all(cursorValue!, remaining)
-          : database.prepare(boundedSql).all(remaining)) as Record<string, unknown>[];
-        let maximum = cursor;
-        for (const rowValue of rows) {
-          const row = plainRow(rowValue);
-          const incremental = query.incrementalField ? text(row[query.incrementalField]) : undefined;
-          if (!options.fromBeginning && cursor !== undefined && incremental !== undefined && incremental <= cursor) continue;
-          const serialized = JSON.stringify(row);
-          const envelope = this.lineEnvelope(source, path, query.fileType, serialized, envelopes.length + 1, options);
-          if (envelope) envelopes.push(envelope);
-          if (incremental !== undefined && (maximum === undefined || incremental > maximum)) maximum = incremental;
-          if (envelopes.length >= (options.maxEvents ?? 10_000)) break;
-        }
-        if (!options.dryRun && maximum !== undefined) this.store.setCursor(source, key, maximum);
       }
     } finally { database.close(); }
     return envelopes;

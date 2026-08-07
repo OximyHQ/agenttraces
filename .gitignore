@@ -3,6 +3,9 @@ dist/
 coverage/
 .agenttraces/
 *.log
+.dev.vars
+.dev.vars.*
+!*.example
 *.tsbuildinfo
 .DS_Store
 apps/web/.vinext/

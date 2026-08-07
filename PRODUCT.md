@@ -37,7 +37,7 @@ The product lives alongside coding-agent CLIs and IDEs, local JSONL and SQLite s
 
 ## Brand Commitments
 
-The product name is AgentTraces, plural. The CLI command and package name use `agenttraces`. The website and dashboard should inherit the restrained, text-first clarity of givemeanode.com while using original AgentTraces copy, diagrams, and interaction patterns.
+The product name is AgentTraces, plural. The CLI command and package name use `agenttraces`. The website and dashboard use a restrained, text-first system with original AgentTraces copy, diagrams, and interaction patterns.
 
 ## Evidence on Hand
 

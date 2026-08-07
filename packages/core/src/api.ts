@@ -28,7 +28,7 @@ export function createAgentTracesApi(store: AgentTracesStore, options: ApiOption
     const url = new URL(request.url ?? "/", "http://localhost");
     try {
       if (request.method === "GET" && url.pathname === "/health") {
-        return send(response, 200, { status: "ok", service: "agenttraces-api", version: "0.1.0" });
+        return send(response, 200, { status: "ok", service: "agenttraces-api", version: "0.2.0" });
       }
       if (request.method === "POST" && url.pathname === "/v1/devices/register") {
         const payload = JSON.parse((await body(request)).toString("utf8")) as { deviceId: string; publicKey: string; name?: string };

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EventKind, NativeEnvelope, NormalizedEvent, ParseResult, SourceName } from "../contracts.js";
+import { inferOperationKind } from "../operations.js";
 
 export const PARSER_VERSION = "1.0.0";
 
@@ -59,6 +60,11 @@ export function event(
   fields: Partial<NormalizedEvent> = {},
 ): NormalizedEvent {
   const rawTimestamp = fields.timestamp ?? text(envelope.raw.timestamp ?? envelope.raw.ts ?? envelope.raw.created_at);
+  const metadata = fields.metadata ?? {};
+  const candidateInput = object(metadata.input ?? metadata.arguments ?? metadata.args);
+  const command = fields.command ?? text(candidateInput.command ?? candidateInput.cmd);
+  const operationKind = kind === "tool_call" ? fields.operationKind ?? inferOperationKind(fields.toolName, command) : fields.operationKind;
+  const candidateOutput = object(metadata.output ?? metadata.result);
   return {
     id: `evt_${stableId(envelope.event_id, index, kind, fields.toolCallId)}`,
     traceId: traceIdFor(envelope),
@@ -73,6 +79,10 @@ export function event(
     branch: envelope.git?.branch,
     metadata: {},
     ...fields,
+    ...(kind === "tool_call" && !fields.input && Object.keys(candidateInput).length ? { input: candidateInput } : {}),
+    ...(kind === "tool_result" && !fields.output && Object.keys(candidateOutput).length ? { output: candidateOutput } : {}),
+    ...(command ? { command } : {}),
+    ...(operationKind ? { operationKind, operationStatus: fields.operationStatus ?? (kind === "tool_call" ? "running" : "succeeded") } : {}),
   };
 }
 
