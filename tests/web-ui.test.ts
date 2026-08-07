@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { mapEvent } from "../apps/web/lib/agenttraces-api.js";
 import { tabKeyIndex } from "../apps/web/lib/tabs.js";
@@ -24,4 +26,12 @@ test("tab keyboard navigation wraps and supports Home and End", () => {
   assert.equal(tabKeyIndex(1, 3, "Home"), 0);
   assert.equal(tabKeyIndex(1, 3, "End"), 2);
   assert.equal(tabKeyIndex(1, 3, "Enter"), null);
+});
+
+test("GitHub OAuth uses the public callback shim", async () => {
+  const auth = await readFile(join(process.cwd(), "apps/web/lib/auth.ts"), "utf8");
+  const callback = await readFile(join(process.cwd(), "apps/web/app/oauth/github/route.ts"), "utf8");
+  assert.match(auth, /redirectURI: new URL\("\/oauth\/github", baseURL\)/);
+  assert.match(callback, /\/api\/auth\/callback\/github/);
+  assert.match(callback, /headers: request\.headers/);
 });

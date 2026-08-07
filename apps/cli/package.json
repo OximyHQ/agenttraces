@@ -29,7 +29,7 @@
   "bugs": {
     "url": "https://github.com/OximyHQ/agenttraces/issues"
   },
-  "homepage": "https://github.com/OximyHQ/agenttraces#readme",
+  "homepage": "https://agenttraces.sh/docs",
   "devDependencies": {
     "@agenttraces/core": "workspace:*",
     "tsup": "8.5.0"
