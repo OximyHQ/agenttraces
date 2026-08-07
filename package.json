@@ -8,6 +8,11 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "pnpm": {
+    "overrides": {
+      "uuid": "11.1.1"
+    }
+  },
   "scripts": {
     "build": "tsc -b packages/core packages/cloud apps/mcp apps/api apps/daemon apps/worker && pnpm --filter agenttraces build",
     "typecheck": "tsc -b packages/core packages/cloud apps/cli apps/mcp apps/api apps/daemon apps/worker --pretty false",

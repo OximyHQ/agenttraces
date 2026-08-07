@@ -102,7 +102,7 @@ export class CloudRuntime {
 
   async claim(token: string, email: string, name?: string) {
     const actor = await this.actorForToken(token); if (!actor) throw new Error("Unauthorized");
-    if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error("Invalid email");
+    if (!validEmail(email)) throw new Error("Invalid email");
     const normalizedEmail = email.toLowerCase(); const client = await this.pool.connect();
     try {
       await client.query("BEGIN");

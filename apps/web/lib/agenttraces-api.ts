@@ -4,7 +4,7 @@ async function bindings() {
   return process.env as Record<string, string | undefined>;
 }
 
-async function cloudCredentials() {
+async function resolveCloudCredentials() {
   const config = await bindings(); const endpoint = config.AGENTTRACES_API_URL;
   if (!endpoint) return null;
   const [{ headers }, { getAuth }] = await Promise.all([import("next/headers"), import("./auth")]);
@@ -15,6 +15,13 @@ async function cloudCredentials() {
   const exchange = await fetch(`${endpoint.replace(/\/$/, "")}/v1/auth/exchange`, { method: "POST", headers: { "content-type": "application/json", "x-agenttraces-web-secret": config.AGENTTRACES_WEB_AUTH_SECRET }, body: JSON.stringify({ userId: session.user.id, email: session.user.email, name: session.user.name }), cache: "no-store" });
   if (!exchange.ok) throw new Error(`AgentTraces identity exchange returned ${exchange.status}`);
   return { endpoint, token: String((await exchange.json() as { accessToken: string }).accessToken) };
+}
+
+let cachedCloudCredentials: (() => ReturnType<typeof resolveCloudCredentials>) | undefined;
+async function cloudCredentials() {
+  const { cache } = await import("react");
+  cachedCloudCredentials ??= cache(resolveCloudCredentials);
+  return cachedCloudCredentials();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T | null> {
