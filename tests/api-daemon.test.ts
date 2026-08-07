@@ -30,7 +30,10 @@ test("API health, authorization, parse errors, and unknown routes have stable st
   try {
     const address = await listen(server); assert.equal((await fetch(`${address.url}/health`)).status, 200);
     assert.equal((await fetch(`${address.url}/v1/search`, { method: "POST", body: "{}" })).status, 401);
-    assert.equal((await fetch(`${address.url}/v1/search`, { method: "POST", headers: { authorization: "Bearer query-test" }, body: "{" })).status, 400);
+    const malformed = await fetch(`${address.url}/v1/search`, { method: "POST", headers: { authorization: "Bearer query-test" }, body: "{" });
+    assert.equal(malformed.status, 400); assert.deepEqual(await malformed.json(), { error: "Invalid JSON" });
+    const internal = await fetch(`${address.url}/v1/devices/register`, { method: "POST", body: JSON.stringify({ deviceId: "invalid", publicKey: "secret-internal-detail" }) });
+    assert.equal(internal.status, 500); assert.deepEqual(await internal.json(), { error: "Internal server error" });
     assert.equal((await fetch(`${address.url}/v1/process`, { method: "POST" })).status, 401);
     assert.equal((await fetch(`${address.url}/v1/process`, { method: "POST", headers: { authorization: "Bearer worker-test" } })).status, 200);
     assert.equal((await fetch(`${address.url}/missing`)).status, 404);

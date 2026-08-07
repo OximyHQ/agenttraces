@@ -60,7 +60,8 @@ export function createAgentTracesApi(store: AgentTracesStore, options: ApiOption
       }
       return send(response, 404, { error: "Not found" });
     } catch (error) {
-      return send(response, error instanceof SyntaxError ? 400 : 500, { error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof SyntaxError) return send(response, 400, { error: "Invalid JSON" });
+      return send(response, 500, { error: "Internal server error" });
     }
   });
 }
