@@ -28,7 +28,6 @@ jobs:
           node-version: 22.22.2
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: npm install --global npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
@@ -39,7 +38,7 @@ jobs:
         run: |
           version="$(node -p "require('./package.json').version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if npm view "agenttraces@$version" version >/dev/null 2>&1; then
+          if npx --yes npm@12.0.2 view "agenttraces@$version" version >/dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
@@ -47,7 +46,7 @@ jobs:
       - name: Publish agenttraces
         if: steps.registry.outputs.published != 'true'
         working-directory: apps/cli
-        run: npm publish --provenance --access public --tag "${{ inputs.npm_tag || 'latest' }}"
+        run: npx --yes npm@12.0.2 publish --provenance --access public --tag "${{ inputs.npm_tag || 'latest' }}"
       - name: Report existing release
         if: steps.registry.outputs.published == 'true'
         run: echo "agenttraces@${{ steps.registry.outputs.version }} is already published; skipping."
