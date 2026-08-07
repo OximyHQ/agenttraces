@@ -86,12 +86,16 @@ async function command(parsed: Parsed, store: AgentTracesStore, userHome: string
     const history = options.history === "all";
     if (endpoint) {
       const daemon = new AgentTracesDaemon(store, userHome); await daemon.register(endpoint);
+      const account = typeof options.email === "string" ? {
+        local: store.claim(options.email, typeof options.name === "string" ? options.name : undefined),
+        cloud: await cloudRequest(store, "/v1/claim", "POST", { email: options.email, name: typeof options.name === "string" ? options.name : undefined }),
+      } : null;
       const team = typeof options["team-token"] === "string" ? await cloudRequest(store, "/v1/setup-links/redeem", "POST", { token: options["team-token"], email: typeof options.email === "string" ? options.email : undefined }) as { teamId?: string } : null;
       if (team?.teamId) store.setSetting("cloud.active_namespace_id", team.teamId);
       const upload = await daemon.upload(endpoint, { fromBeginning: history, maxEvents: integer(options.limit, 10_000) });
       return {
         status: "ready", disclosure: "New coding-agent sessions are captured automatically. Personal traces are private by default. Cloud capture advances local cursors only after durable upload acknowledgement.",
-        identity: store.installation(), endpoint, cloud: "canonical", team, history: history ? "imported" : "new_sessions_only",
+        identity: store.installation(), endpoint, cloud: "canonical", account, team, history: history ? "imported" : "new_sessions_only",
         detected: detection.filter((item) => item.detected).map((item) => item.source), integrations,
         capture: summarizeCapture(upload.results), receipt: upload.receipt,
       };
