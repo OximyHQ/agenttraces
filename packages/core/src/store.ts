@@ -22,6 +22,11 @@ function parse<T>(value: unknown, fallback: T): T {
 function iso() { return new Date().toISOString(); }
 function id(prefix: string) { return `${prefix}_${randomBytes(9).toString("base64url")}`; }
 function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }
+function validEmail(value: string) {
+  if (value.length < 3 || value.length > 254 || [...value].some((character) => character.trim() === "")) return false;
+  const at = value.indexOf("@");
+  return at > 0 && at === value.lastIndexOf("@") && at < value.length - 3 && value.indexOf(".", at + 2) > at + 1 && !value.endsWith(".");
+}
 
 export class AgentTracesStore {
   readonly db: DatabaseSync;
@@ -271,7 +276,7 @@ export class AgentTracesStore {
       throw new Error("Setup link maxUses must be between 1 and 10000");
     }
     if (options.expiresAt && Date.parse(options.expiresAt) <= Date.now()) throw new Error("Setup link expiry must be in the future");
-    if (options.email && !/^\S+@\S+\.\S+$/.test(options.email)) throw new Error("Invalid setup link email");
+    if (options.email && !validEmail(options.email)) throw new Error("Invalid setup link email");
     if (options.domain && !/^[a-z0-9.-]+$/i.test(options.domain)) throw new Error("Invalid setup link domain");
     const setupLinkId = id("setup");
     const token = randomBytes(24).toString("base64url");

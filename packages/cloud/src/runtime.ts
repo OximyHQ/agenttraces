@@ -10,6 +10,11 @@ import type { CloudConfig } from "./config.js";
 import { CLOUD_SCHEMA } from "./schema.js";
 
 function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }
+function validEmail(value: string) {
+  if (value.length < 3 || value.length > 254 || [...value].some((character) => character.trim() === "")) return false;
+  const at = value.indexOf("@");
+  return at > 0 && at === value.lastIndexOf("@") && at < value.length - 3 && value.indexOf(".", at + 2) > at + 1 && !value.endsWith(".");
+}
 function opaque(prefix: string) { return `${prefix}_${randomBytes(18).toString("base64url")}`; }
 function redisConnection(url: string) { const parsed = new URL(url); return { host: parsed.hostname, port: Number(parsed.port || 6379), username: parsed.username || undefined, password: parsed.password || undefined, tls: parsed.protocol === "rediss:" ? {} : undefined }; }
 function canonicalRepository(value: string) {
@@ -71,7 +76,7 @@ export class CloudRuntime {
 
   async exchangeWebIdentity(serviceSecret: string, input: { userId: string; email: string; name?: string }) {
     if (!this.config.webAuthSecret || serviceSecret !== this.config.webAuthSecret) throw new Error("Unauthorized");
-    if (!input.userId || !/^\S+@\S+\.\S+$/.test(input.email)) throw new Error("Invalid web identity");
+    if (!input.userId || !validEmail(input.email)) throw new Error("Invalid web identity");
     const accessToken = opaque("at_web"); const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -162,7 +167,7 @@ export class CloudRuntime {
     const maxUses = options.maxUses ?? 50;
     if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 10_000) throw new Error("Invalid setup link max uses");
     if (options.expiresAt && Date.parse(options.expiresAt) <= Date.now()) throw new Error("Invalid setup link expiry");
-    if (options.email && !/^\S+@\S+\.\S+$/.test(options.email)) throw new Error("Invalid setup link email");
+    if (options.email && !validEmail(options.email)) throw new Error("Invalid setup link email");
     if (options.domain && !/^[a-z0-9.-]+$/i.test(options.domain)) throw new Error("Invalid setup link domain");
     const rawToken = randomBytes(24).toString("base64url"); const id = opaque("setup");
     const expiresAt = options.expiresAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString();

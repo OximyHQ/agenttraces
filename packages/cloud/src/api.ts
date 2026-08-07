@@ -4,7 +4,7 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { MCP_TOOLS, verifyDeviceSignature, type JsonRpcRequest, type NativeEnvelope } from "@agenttraces/core";
 import type { CloudRuntime } from "./runtime.js";
 
-function send(response: ServerResponse, status: number, value: unknown) { const body = JSON.stringify(value); response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body), "cache-control": "no-store" }); response.end(body); }
+function send(response: ServerResponse, status: number, value: unknown) { const body = JSON.stringify(value, (key, item) => key === "stack" || item instanceof Error ? undefined : item); response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body), "cache-control": "no-store" }); response.end(body); }
 async function readBody(request: IncomingMessage, max = 20 * 1024 * 1024) { const chunks: Buffer[] = []; let size = 0; for await (const part of request) { const chunk = Buffer.from(part as Uint8Array); size += chunk.length; if (size > max) throw new Error("Request too large"); chunks.push(chunk); } return Buffer.concat(chunks); }
 function bearer(request: IncomingMessage) { const value = request.headers.authorization; return value?.startsWith("Bearer ") ? value.slice(7) : ""; }
 function validGitHubSignature(secret: string | undefined, body: Buffer, signature: string) {
@@ -87,6 +87,6 @@ export function createCloudApi(runtime: CloudRuntime) {
         else throw new Error("Method not found"); return send(response, 200, { jsonrpc: "2.0", id: rpc.id, result });
       }
       return send(response, 404, { error: "Not found" });
-    } catch (error) { const message = error instanceof Error ? error.message : String(error); return send(response, /Unauthorized|access denied|inaccessible/.test(message) ? 401 : /not found|revoked/i.test(message) ? 404 : /Invalid|required|expired|usage limit|too large/.test(message) ? 400 : 500, { error: message }); }
+    } catch (error) { const message = error instanceof Error ? error.message : String(error); const status = /Unauthorized|access denied|inaccessible/.test(message) ? 401 : /not found|revoked/i.test(message) ? 404 : /Invalid|required|expired|usage limit|too large/.test(message) ? 400 : 500; return send(response, status, { error: status === 500 ? "Internal server error" : message }); }
   });
 }

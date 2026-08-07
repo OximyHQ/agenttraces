@@ -1,4 +1,4 @@
-import { demoTraces, type TraceEvent, type TraceRecord } from "./product-data";
+import { demoTeam, demoTraces, type TraceEvent, type TraceRecord } from "./product-data";
 
 async function bindings() {
   return process.env as Record<string, string | undefined>;
@@ -37,12 +37,49 @@ export function mapEvent(row: Record<string, unknown>): TraceEvent {
 function mapTrace(row: Record<string, unknown>): TraceRecord {
   const pullRequests = (row.pull_requests ?? []) as Array<Record<string, unknown>>; const eventRows = (row.events ?? []) as Array<Record<string, unknown>>;
   const model = row.model ?? eventRows.find((event) => event.model)?.model;
-  return { id: String(row.id), title: String(row.title), summary: String(row.summary ?? "No summary has been generated yet."), source: sourceName(String(row.source)), model: model ? String(model) : undefined, repository: String(row.repository ?? "No repository"), branch: String(row.branch ?? "—"), owner: String(row.owner_name ?? row.owner_email ?? "You"), updated: new Date(String(row.updated_at)).toLocaleString(), duration: "—", events: Number(row.event_count ?? 0), tokens: new Intl.NumberFormat("en", { notation: "compact" }).format(Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0)), cost: row.cost_accuracy === "subscription_included" ? "Included" : row.cost_usd == null ? "Unavailable" : `$${Number(row.cost_usd).toFixed(2)}`, costAccuracy: String(row.cost_accuracy ?? "unavailable").replaceAll("_", " "), pullRequests: pullRequests.map((pr) => ({ number: Number(pr.number), title: String(pr.title ?? "Pull request"), state: String(pr.state ?? "unknown"), evidence: String(pr.evidence ?? "unknown") })), stages: ((row.stages ?? []) as TraceRecord["stages"]), timeline: eventRows.map(mapEvent) };
+  return { id: String(row.id), title: String(row.title), summary: String(row.summary ?? "No summary has been generated yet."), source: sourceName(String(row.source)), model: model ? String(model) : undefined, repository: String(row.repository ?? "No repository"), branch: String(row.branch ?? "—"), owner: String(row.owner_name ?? row.owner_email ?? "You"), updated: new Date(String(row.updated_at)).toLocaleString(), duration: "—", events: Number(row.event_count ?? 0), tokens: new Intl.NumberFormat("en", { notation: "compact" }).format(Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0)), cost: row.cost_accuracy === "subscription_included" ? "Included" : row.cost_usd == null ? "Unavailable" : `$${Number(row.cost_usd).toFixed(2)}`, costAccuracy: String(row.cost_accuracy ?? "unavailable").replaceAll("_", " "), pullRequests: pullRequests.map((pr) => ({ number: Number(pr.number), title: String(pr.title ?? "Pull request"), state: String(pr.state ?? "unknown"), evidence: String(pr.evidence ?? "unknown"), repository: pr.repository ? String(pr.repository) : undefined, url: pr.url ? String(pr.url) : undefined, confidence: pr.confidence == null ? undefined : Number(pr.confidence) })), stages: ((row.stages ?? []) as TraceRecord["stages"]), timeline: eventRows.map(mapEvent) };
 }
 
 export async function traces() {
   const cloud = await request<{ traces: Record<string, unknown>[] }>("/v1/traces?limit=50");
   return cloud ? { records: cloud.traces.map(mapTrace), preview: false } : { records: demoTraces, preview: true };
+}
+
+export async function usageSummary() {
+  const cloud = await request<{ sessions: number; inputTokens: number; outputTokens: number; costUsd: number; accuracy: string }>("/v1/usage");
+  if (cloud) return { ...cloud, preview: false };
+  return { sessions: demoTraces.length, inputTokens: 0, outputTokens: 582_000, costUsd: 1.82, accuracy: "mixed", preview: true };
+}
+
+export interface TeamWorkspace {
+  id?: string;
+  name: string;
+  role: string;
+  visibility: string;
+  deviceCount: number;
+  devices: Array<Record<string, unknown>>;
+  repositories: Array<Record<string, unknown>>;
+  setupLinks: Array<Record<string, unknown>>;
+}
+
+export async function teamWorkspace(): Promise<{ workspace: TeamWorkspace | null; preview: boolean }> {
+  const cloud = await request<{ teams: Array<Record<string, unknown>> }>("/v1/teams");
+  if (!cloud) return { workspace: { name: demoTeam.name, role: "owner", visibility: "private", deviceCount: demoTeam.members.length, devices: demoTeam.members, repositories: demoTeam.repositories.map((repository) => ({ repository })), setupLinks: [] }, preview: true };
+  const team = cloud.teams[0];
+  if (!team) return { workspace: null, preview: false };
+  const id = String(team.id);
+  const [devices, repositories, setupLinks] = await Promise.all([
+    request<{ devices: Array<Record<string, unknown>> }>(`/v1/teams/${encodeURIComponent(id)}/devices`),
+    request<{ repositories: Array<Record<string, unknown>> }>(`/v1/teams/${encodeURIComponent(id)}/repositories`),
+    request<{ setupLinks: Array<Record<string, unknown>> }>(`/v1/teams/${encodeURIComponent(id)}/setup-links`),
+  ]);
+  return { preview: false, workspace: { id, name: String(team.name), role: String(team.role), visibility: String(team.visibility_default), deviceCount: Number(team.device_count ?? devices?.devices.length ?? 0), devices: devices?.devices ?? [], repositories: repositories?.repositories ?? [], setupLinks: setupLinks?.setupLinks ?? [] } };
+}
+
+export async function pullRequestTrace(repository: string, number: number) {
+  const cloud = await request<{ pullRequest: Record<string, unknown> | null; traces: Record<string, unknown>[]; usage: { inputTokens: number; outputTokens: number; costUsd: number; accuracy: string } }>(`/v1/pull-requests/trace?repository=${encodeURIComponent(repository)}&number=${number}`);
+  if (cloud) return { ...cloud, traces: cloud.traces.map(mapTrace), preview: false };
+  return { pullRequest: { repository: "OximyHQ/agenttraces", number, title: "Connect traces to pull requests", state: "open" }, traces: demoTraces.slice(0, 2), usage: { inputTokens: 0, outputTokens: 280_000, costUsd: 1.82, accuracy: "mixed" }, preview: true };
 }
 
 export async function trace(traceId: string) {

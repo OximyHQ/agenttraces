@@ -28,7 +28,7 @@ export interface TraceRecord {
   tokens: string;
   cost: string;
   costAccuracy: string;
-  pullRequests: Array<{ number: number; title: string; state: string; evidence: string }>;
+  pullRequests: Array<{ number: number; title: string; state: string; evidence: string; repository?: string; url?: string; confidence?: number }>;
   stages: Array<{ title: string; text: string }>;
   timeline: TraceEvent[];
 }
