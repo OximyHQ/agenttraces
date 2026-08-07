@@ -8,7 +8,7 @@
   "dependencies": {
     "@agenttraces/core": "workspace:*",
     "@aws-sdk/client-s3": "3.1105.0",
-    "bullmq": "5.58.5",
+    "bullmq": "6.0.6",
     "pg": "8.16.3"
   },
   "devDependencies": {
