@@ -323,9 +323,10 @@ async function githubCommand(positionals: string[], options: Record<string, stri
 
 function configCommand(positionals: string[], options: Record<string, string | boolean>, store: AgentTracesStore) {
   const action = positionals[0] ?? "list";
-  if (action === "list") return store.settings();
-  if (action === "get") return { key: required(positionals[1], "key"), value: store.setting(required(positionals[1], "key")) ?? null };
-  if (action === "set") { const key = required(positionals[1], "key"); const value = required(positionals[2] ?? options.value, "value"); store.setSetting(key, value); return { key, value }; }
+  const redact = (key: string, value: string | null | undefined) => value == null ? null : /token|secret|password|private[_-]?key/i.test(key) ? "<redacted>" : value;
+  if (action === "list") return Object.fromEntries(Object.entries(store.settings()).map(([key, value]) => [key, redact(key, value == null ? null : String(value))]));
+  if (action === "get") { const key = required(positionals[1], "key"); return { key, value: redact(key, store.setting(key)) }; }
+  if (action === "set") { const key = required(positionals[1], "key"); const value = required(positionals[2] ?? options.value, "value"); store.setSetting(key, value); return { key, value: redact(key, value) }; }
   throw new Error(`Unknown config action: ${action}`);
 }
 

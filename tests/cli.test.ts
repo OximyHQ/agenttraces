@@ -53,3 +53,16 @@ test("CLI reports stable errors and does not mutate integrations when disabled",
     assert.equal((await executeCli(["unknown", "--json"], context)).code, 1);
   } finally { temp.cleanup(); }
 });
+
+test("CLI never prints secret configuration values", async () => {
+  const temp = temporary();
+  try {
+    const context = { stateHome: `${temp.path}/state`, userHome: `${temp.path}/user`, io: { out() {}, err() {} } };
+    const stored = await executeCli(["config", "set", "cloud.access_token", "sensitive-test-value", "--json"], context);
+    assert.deepEqual(stored.value, { key: "cloud.access_token", value: "<redacted>" });
+    const listed = await executeCli(["config", "list", "--json"], context);
+    assert.equal((listed.value as Record<string, string>)["cloud.access_token"], "<redacted>");
+    const read = await executeCli(["config", "get", "cloud.access_token", "--json"], context);
+    assert.deepEqual(read.value, { key: "cloud.access_token", value: "<redacted>" });
+  } finally { temp.cleanup(); }
+});
