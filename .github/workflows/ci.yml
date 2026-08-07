@@ -10,7 +10,12 @@ permissions:
 
 jobs:
   verify:
-    runs-on: macos-14
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
