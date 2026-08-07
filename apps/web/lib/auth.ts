@@ -16,15 +16,20 @@ function authPool() {
 export function getAuth() {
   const githubClientId = process.env.GITHUB_CLIENT_ID;
   const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const baseURL = process.env.BETTER_AUTH_URL;
   const secret = process.env.BETTER_AUTH_SECRET ?? (process.env.NODE_ENV === "development" ? "agenttraces-local-development-secret-change-me" : undefined);
   if (!secret) throw new Error("BETTER_AUTH_SECRET is required");
   return betterAuth({
     appName: "AgentTraces",
-    baseURL: process.env.BETTER_AUTH_URL,
+    baseURL,
     secret,
     database: authPool(),
     emailAndPassword: { enabled: true, minPasswordLength: 10 },
-    socialProviders: githubClientId && githubClientSecret ? { github: { clientId: githubClientId, clientSecret: githubClientSecret } } : {},
+    socialProviders: githubClientId && githubClientSecret ? { github: {
+      clientId: githubClientId,
+      clientSecret: githubClientSecret,
+      ...(baseURL ? { redirectURI: new URL("/oauth/github", baseURL).toString() } : {}),
+    } } : {},
     session: { expiresIn: 60 * 60 * 24 * 30, updateAge: 60 * 60 * 24 },
     advanced: {
       ipAddress: { ipAddressHeaders: ["x-real-ip"] },
