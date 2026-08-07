@@ -32,6 +32,6 @@
   "homepage": "https://agenttraces.sh/docs",
   "devDependencies": {
     "@agenttraces/core": "workspace:*",
-    "tsup": "8.5.0"
+    "tsup": "8.5.1"
   }
 }
